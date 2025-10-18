@@ -1,21 +1,17 @@
 ﻿using IdentityModel.Client;
-using IdentityServer.Models;
 using IdentityServer.Models.Dto.User;
 using IdentityServer.Services.User;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using System.Net.Http;
-using System.Security.Claims;
 using System.Threading.Tasks;
-using static IdentityServer4.IdentityServerConstants;
+using Microsoft.AspNetCore.Authorization;
+using NUlid;
 
 namespace IdentityServer.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    //[Authorize(LocalApi.PolicyName)]
+    [Authorize]
     public class UserController : ControllerBase
     {
         private readonly IUserService _userService;
@@ -32,19 +28,18 @@ namespace IdentityServer.Controllers
 
             var disco = await client.GetDiscoveryDocumentAsync("https://localhost:5001");
 
-            var password = new PasswordTokenRequest();
-
-            password.Address = disco.TokenEndpoint;
-            password.UserName = "fcakiroglu@outlook.com";
-            password.Password = "password";
-            password.ClientId = "client2";
+            var password = new PasswordTokenRequest
+            {
+                Address = disco.TokenEndpoint,
+                UserName = "fcakiroglu@outlook.com",
+                Password = "password",
+                ClientId = "client2"
+            };
 
             var token = await client.RequestPasswordTokenAsync(password);
 
-            var aa = new UserInfoRequest();
-            aa.Token = "";
-
-            return Ok("sign up çalıştı");
+            // Dönen token'ı debug veya frontend'e göstermek için dönüyoruz. Üretimde AccessToken'ı doğrudan döndürme.
+            return Ok(token);
         }
 
         //[HttpPost]
@@ -88,9 +83,14 @@ namespace IdentityServer.Controllers
             return Ok(result.Data);
         }
 
-        [HttpPost("CreateUser")]
-        public async Task<IActionResult> CreateUser(ApplicationUserRequestDto userRequestDto)
+        [HttpPost("RegisterUser")]
+        [AllowAnonymous]
+        public async Task<IActionResult> RegisterUser([FromBody] ApplicationUserRequestDto userRequestDto)
         {
+            // Not: Controller'da [ApiController] varsa framework otomatik olarak model doğrulama hatalarında 400 döndürür.
+            // Eğer özel bir hata formatı istiyorsanız Program.cs içinde ApiBehaviorOptions.SuppressModelStateInvalidFilter = true yapıp burada ModelState'i kontrol edebilirsiniz.
+            
+
             var result = await _userService.CreateUserAsync(userRequestDto);
 
             if (result.HasError)

@@ -15,6 +15,7 @@ using IdentityServer.Repositories.Identity;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NUlid;
 
 namespace IdentityServer.Services.User
 {
@@ -40,7 +41,8 @@ namespace IdentityServer.Services.User
             var response = new ApiResponse<bool>();
             try
             {
-                userRequestDto.TenantId = _userInfo.TenantId;
+                userRequestDto.Id = Ulid.NewUlid().ToString();
+                userRequestDto.UserName = userRequestDto.Email;
                 var map = _mapper.Map<ApplicationUserRequestDto, ApplicationUser>(userRequestDto);
                 var addUserResult = await _userManager.CreateAsync(map, userRequestDto.Password);
                 if (addUserResult.Succeeded)

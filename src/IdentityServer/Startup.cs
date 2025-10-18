@@ -64,7 +64,18 @@ namespace IdentityServer
 
             var assemblyName = typeof(Startup).GetTypeInfo().Assembly.GetName().Name;
 
-            services.AddIdentity<ApplicationUser, ApplicationRole>()
+            services.AddIdentity<ApplicationUser, ApplicationRole>(options =>
+                {
+                    // zorunlu karakter tipleri
+                    options.Password.RequireDigit = false;
+                    options.Password.RequireLowercase = false;
+                    options.Password.RequireUppercase = false;
+                    options.Password.RequireNonAlphanumeric = false; // istersen true yap
+                    // minimum uzunluk
+                    options.Password.RequiredLength = 8;
+                    // benzersiz karakter sayısı + Tipik: 1
+                    options.Password.RequiredUniqueChars = 1;
+                })
                 .AddEntityFrameworkStores<ApplicationDbContext>()
                 .AddDefaultTokenProviders();
 
