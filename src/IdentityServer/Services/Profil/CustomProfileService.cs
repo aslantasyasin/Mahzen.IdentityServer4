@@ -21,22 +21,29 @@ public class CustomProfileService : IProfileService
     public async Task GetProfileDataAsync(ProfileDataRequestContext context)
     {
         var user = await _userManager.GetUserAsync(context.Subject);
-        var claims = new List<Claim>
+        if (user == null)
         {
-            new Claim("full_name", user.FirstName + " " + user.LastName),
-            new Claim("first_name", user.FirstName),
-            new Claim("last_name", user.LastName),
-            new Claim("email", user.Email),
-            new Claim("user_name", user.UserName),
-            new Claim("phone_number", user.PhoneNumber),
-            new Claim("user_type", user.UserType.ToString()),
-            new Claim("tenant_id", user.TenantId.ToString()),
-        };
+            // no subject/user -> no claims
+            return;
+        }
 
-        // sadece istenen scope’lara göre claim ekleme
-        var requested = claims.Where(c => context.RequestedClaimTypes.Contains(c.Type));
-        context.IssuedClaims.AddRange(requested);
-        
+        // helper: add claim only if it's requested and has a non-empty value
+        void AddIfRequested(string type, string? value)
+        {
+            if (!context.RequestedClaimTypes.Contains(type)) return;
+            if (string.IsNullOrWhiteSpace(value)) return;
+            context.IssuedClaims.Add(new Claim(type, value));
+        }
+
+        // populate claims safely
+        AddIfRequested("full_name", $"{user.FirstName ?? string.Empty} {user.LastName ?? string.Empty}".Trim());
+        AddIfRequested("first_name", user.FirstName);
+        AddIfRequested("last_name", user.LastName);
+        AddIfRequested("email", user.Email);
+        AddIfRequested("user_name", user.UserName);
+        AddIfRequested("phone_number", user.PhoneNumber);
+        AddIfRequested("user_type", user.UserType.ToString());
+        AddIfRequested("tenant_id", user.TenantId.ToString());
     }
 
     public async Task IsActiveAsync(IsActiveContext context)
