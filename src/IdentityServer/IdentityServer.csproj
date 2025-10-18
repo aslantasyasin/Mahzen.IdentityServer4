@@ -1,0 +1,75 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(RunConfiguration)' == 'SelfHost' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="IdentityServer4.AspNetIdentity" Version="4.1.2" />
+    <PackageReference Include="IdentityServer4.EntityFramework" Version="4.1.2" />
+
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="6.0.11" />
+
+    <PackageReference Include="Npgsql" Version="6.0.7" />
+
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="6.0.7" />
+    <PackageReference Include="Serilog.AspNetCore" Version="6.0.1" />
+
+    <PackageReference Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore" Version="6.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="6.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="6.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="6.0.11" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.UI" Version="6.0.11" />
+    <PackageReference Include="NuGet.PackageManagement" Version="6.4.0" />
+    <PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="8.1.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="NuGet.PackageManagement" />
+    <None Remove="Services\Login\" />
+    <None Remove="Models\Base\" />
+    <None Remove="Models\Dto\" />
+    <None Remove="Services\Role\" />
+    <None Remove="Models\Dto\Role\" />
+    <None Remove="Models\Dto\User\" />
+    <None Remove="AutoMapper.Extensions.Microsoft.DependencyInjection" />
+    <None Remove="Mapper\" />
+    <None Remove="Helper\" />
+    <None Remove="Middlewares\" />
+    <None Remove="Models\Custom\" />
+    <None Remove="Models\Custom\Base\" />
+    <None Remove="Repositories\" />
+    <None Remove="Services\User\" />
+    <None Remove="Repositories\Custom\" />
+    <None Remove="Repositories\Identity\" />
+    <None Remove="Models\Dto\Claim\" />
+    <None Remove="Repositories\Hybrid\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Services\Login\" />
+    <Folder Include="Models\Base\" />
+    <Folder Include="Models\Dto\" />
+    <Folder Include="Services\Role\" />
+    <Folder Include="Models\Dto\Role\" />
+    <Folder Include="Models\Dto\User\" />
+    <Folder Include="Mapper\" />
+    <Folder Include="Helper\" />
+    <Folder Include="Middlewares\" />
+    <Folder Include="Models\Custom\" />
+    <Folder Include="Models\Custom\Base\" />
+    <Folder Include="Repositories\" />
+    <Folder Include="Services\User\" />
+    <Folder Include="Repositories\" />
+    <Folder Include="Repositories\Custom\" />
+    <Folder Include="Repositories\Identity\" />
+    <Folder Include="Models\Dto\Claim\" />
+    <Folder Include="Repositories\Hybrid\" />
+  </ItemGroup>
+</Project>
