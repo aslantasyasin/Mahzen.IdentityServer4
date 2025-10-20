@@ -23,12 +23,11 @@ namespace IdentityServer.Models.Dto.User
        
         public string UserName { get; set; }
         
-        [Range(1, int.MaxValue, ErrorMessage = "Tenant ID must be a positive number.")]
         public int TenantId { get; set; }
         
-        [Required(ErrorMessage = "Country code is required.")]
-        [RegularExpression("^\\+\\d{1,3}$", ErrorMessage = "Country code must be in the format +90 or +1 (1-3 digits).")]
-        public string CountryCode { get; set; } ="+90";
+        [Required(ErrorMessage = "Country code is required.")]       
+        [RegularExpression(@"^\d{1,3}$", ErrorMessage = "Country code must be 1-3 digits without '+' (e.g. 90 or 1).")]
+        public string CountryCode { get; set; } ="90";
         
         [Required(ErrorMessage = "Phone number is required.")]
         [RegularExpression("^[1-9][0-9]{9}$", ErrorMessage = "Phone number must be exactly 10 digits and cannot start with 0.")]

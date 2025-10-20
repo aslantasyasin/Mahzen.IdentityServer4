@@ -35,7 +35,9 @@ namespace IdentityServer.Data
 
             builder.Entity<ApplicationRole>().HasQueryFilter(x => x.TenantId == _userInfo.TenantId);
             //builder.Entity<ApplicationUser>().HasQueryFilter(x => x.TenantId == _userInfo.TenantId);
-            
+            builder.Entity<ApplicationUser>()
+                .HasIndex(u => u.PhoneNumber)
+                .IsUnique();
             //builder.Entity<ApplicationRoleClaim>().HasQueryFilter(x => x.TenantId == _tenantId);
             //builder.Entity<ApplicationUserClaim>().HasQueryFilter(x => x.TenantId == _tenantId);
             //builder.Entity<ApplicationUserRole>().HasQueryFilter(x => x.TenantId == _tenantId);

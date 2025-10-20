@@ -9,7 +9,7 @@ using NUlid;
 
 namespace IdentityServer.Controllers
 {
-    [Route("api/[controller]")]
+    [Route("[controller]")]
     [ApiController]
     [Authorize]
     public class UserController : ControllerBase
@@ -83,9 +83,9 @@ namespace IdentityServer.Controllers
             return Ok(result.Data);
         }
 
-        [HttpPost("RegisterUser")]
+        [HttpPost("Register")]
         [AllowAnonymous]
-        public async Task<IActionResult> RegisterUser([FromBody] ApplicationUserRequestDto userRequestDto)
+        public async Task<IActionResult> Register([FromBody] ApplicationUserRequestDto userRequestDto)
         {
             // Not: Controller'da [ApiController] varsa framework otomatik olarak model doğrulama hatalarında 400 döndürür.
             // Eğer özel bir hata formatı istiyorsanız Program.cs içinde ApiBehaviorOptions.SuppressModelStateInvalidFilter = true yapıp burada ModelState'i kontrol edebilirsiniz.

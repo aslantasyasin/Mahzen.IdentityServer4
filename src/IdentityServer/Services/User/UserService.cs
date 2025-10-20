@@ -41,18 +41,36 @@ namespace IdentityServer.Services.User
             var response = new ApiResponse<bool>();
             try
             {
+                var getUserByEmail = await _userManager.FindByEmailAsync(userRequestDto.Email);
+                if (getUserByEmail != null)
+                {
+                    var errorMessage = "Bu email ile daha önce kayıt yapılmış!";
+                    return ApiResponse<bool>.Fail(errorMessage);
+                }
+
+                var getUserPhone = await _userManager.Users
+                    .FirstOrDefaultAsync(u => u.PhoneNumber == userRequestDto.PhoneNumber);
+
+                if (getUserPhone != null)
+                {
+                    var errorMessage = "Bu telefon numarası ile daha önce kayıt yapılmış!";
+                    return ApiResponse<bool>.Fail(errorMessage);
+                }
+                
+                // aynı email/userName ile kayıtta hata mesajı dönülecek ve ona göre model güncellenecek
                 userRequestDto.Id = Ulid.NewUlid().ToString();
                 userRequestDto.UserName = userRequestDto.Email;
+                userRequestDto.IsActive = true;
                 var map = _mapper.Map<ApplicationUserRequestDto, ApplicationUser>(userRequestDto);
                 var addUserResult = await _userManager.CreateAsync(map, userRequestDto.Password);
                 if (addUserResult.Succeeded)
                 {
                     var claims = new List<Claim>();
                     var tenantClaim = new Claim("tenantid", _userInfo.TenantId.ToString());
-                    var userNameClaim = new Claim("username", map.UserName);
+                    var phoneNumberClaim = new Claim("phone_number", map.UserName);
 
                     claims.Add(tenantClaim);
-                    claims.Add(userNameClaim);
+                    claims.Add(phoneNumberClaim);
 
                     var claimresult = await _userManager.AddClaimsAsync(map, claims);
                     response.Data = addUserResult.Succeeded;
