@@ -113,16 +113,19 @@ namespace IdentityServer
 
             app.UseStaticFiles();
             app.UseCors(corsPolicyBuilder =>
-                       corsPolicyBuilder.AllowAnyOrigin()
-                      .AllowAnyMethod()
-                      .AllowAnyHeader()
-                    );
-            
+                           corsPolicyBuilder.AllowAnyOrigin()
+                          .AllowAnyMethod()
+                          .AllowAnyHeader());
+
             app.UseRouting();
+
             app.UseIdentityServer();
+            app.UseAuthentication();
             app.UseAuthorization();
+
             app.UseEndpoints(endpoints =>
             {
+                endpoints.MapControllers();
                 endpoints.MapDefaultControllerRoute();
             });
         }

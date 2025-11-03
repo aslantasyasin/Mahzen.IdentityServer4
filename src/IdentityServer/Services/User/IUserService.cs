@@ -19,6 +19,7 @@ namespace IdentityServer.Services.User
         Task<ApiResponse<bool>> AddUserRoleAsync(UserRoleRequestDto addUserRoleRequestDto);
         Task<ApiResponse<bool>> DeleteUserRoleAsync(UserRoleRequestDto addUserRoleRequestDto);
         Task<ApiResponse<List<UserMenuResponseDto>>> GetUserMenusAsync(string userId);
-    }
+        Task<ApiResponse<UserResponseDto>> GetUserByIdAsync(string id);
+	}
 }
 

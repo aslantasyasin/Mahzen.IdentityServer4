@@ -57,9 +57,9 @@ namespace IdentityServer.Services.User
                     return ApiResponse<bool>.Fail(errorMessage);
                 }
                 
-                // aynı email/userName ile kayıtta hata mesajı dönülecek ve ona göre model güncellenecek
                 userRequestDto.Id = Ulid.NewUlid().ToString();
                 userRequestDto.UserName = userRequestDto.Email;
+                userRequestDto.TenantId = 1;
                 userRequestDto.IsActive = true;
                 var map = _mapper.Map<ApplicationUserRequestDto, ApplicationUser>(userRequestDto);
                 var addUserResult = await _userManager.CreateAsync(map, userRequestDto.Password);
@@ -109,6 +109,23 @@ namespace IdentityServer.Services.User
                 var users = await _userManager.Users.Where(x => x.TenantId == _userInfo.TenantId).ToListAsync();
 
                 response.Data = _mapper.Map<List<ApplicationUser>, List<UserResponseDto>>(users);
+
+            }
+            catch (Exception ex)
+            {
+                response.Errors.Add(ex.Message);
+            }
+            return response;
+        }
+        
+        public async Task<ApiResponse<UserResponseDto>> GetUserByIdAsync(string id)
+        {
+            var response = new ApiResponse<UserResponseDto>();
+            try
+            {
+                var user = await _userManager.FindByIdAsync(id);
+
+                response.Data = _mapper.Map<UserResponseDto>(user);
 
             }
             catch (Exception ex)

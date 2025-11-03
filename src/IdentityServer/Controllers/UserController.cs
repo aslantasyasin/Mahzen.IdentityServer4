@@ -4,14 +4,15 @@ using IdentityServer.Services.User;
 using Microsoft.AspNetCore.Mvc;
 using System.Net.Http;
 using System.Threading.Tasks;
+using IdentityServer4;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
-using NUlid;
 
 namespace IdentityServer.Controllers
 {
-    [Route("[controller]")]
+    [Route("api/[controller]")]
     [ApiController]
-    [Authorize]
+    [Authorize(Policy = IdentityServerConstants.LocalApi.PolicyName)]
     public class UserController : ControllerBase
     {
         private readonly IUserService _userService;
@@ -81,6 +82,17 @@ namespace IdentityServer.Controllers
                 return BadRequest(result.Errors);
 
             return Ok(result.Data);
+        }
+        
+        [HttpGet("Get/{id}")]
+        public async Task<IActionResult> GetUserById(string id)
+        {
+            var result = await _userService.GetUserByIdAsync(id);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
         }
 
         [HttpPost("Register")]
