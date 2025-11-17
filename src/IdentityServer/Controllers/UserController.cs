@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Mvc;
 using System.Net.Http;
 using System.Threading.Tasks;
 using IdentityServer4;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 
 namespace IdentityServer.Controllers
@@ -109,6 +108,34 @@ namespace IdentityServer.Controllers
                 return BadRequest(result.Errors);
 
             return Ok(result.Data);
+        }
+
+        [HttpPost("ChangePassword")]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequestDto model)
+        {
+            
+            var userId = User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return BadRequest(new[] { "Token'dan kullanıcı id alınamadı." });
+
+            var result = await _userService.ChangePasswordAsync(userId, model.CurrentPassword, model.NewPassword);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
+        
+        [HttpGet("GetEmail/{userId}")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetEmailByUserId(string userId)
+        {
+            var result = await _userService.GetContactInfoByUserId(userId);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
         }
 
         [HttpPut("UpdateUser/{userId}")]

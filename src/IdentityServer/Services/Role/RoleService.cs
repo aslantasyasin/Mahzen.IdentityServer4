@@ -5,7 +5,6 @@ using System.Linq;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using AutoMapper;
-using IdentityServer.Migrations.ApplicationDb;
 using IdentityServer.Models;
 using IdentityServer.Models.Base;
 using IdentityServer.Models.Custom;

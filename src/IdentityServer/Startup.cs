@@ -56,11 +56,13 @@ namespace IdentityServer
 
             services.AddDbContext<CustomDbContext>(option =>
             {
-                option.UseNpgsql(Configuration.GetConnectionString("DefaultConnection"));
+                option.UseNpgsql(Configuration.GetConnectionString("DefaultConnection"),
+                    npgsql => npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "ids4"));
             });
 
             services.AddDbContext<ApplicationDbContext>(options =>
-                options.UseNpgsql(Configuration.GetConnectionString("DefaultConnection")));
+                options.UseNpgsql(Configuration.GetConnectionString("DefaultConnection"),
+                    npgsql => npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "ids4")));
 
             var assemblyName = typeof(Startup).GetTypeInfo().Assembly.GetName().Name;
 
@@ -79,10 +81,19 @@ namespace IdentityServer
                 .AddEntityFrameworkStores<ApplicationDbContext>()
                 .AddDefaultTokenProviders();
 
+            var connectionString = Configuration.GetConnectionString("DefaultConnection");
+            var migrationsAssembly = typeof(Startup).Assembly.GetName().Name;
+            
             var builder = services.AddIdentityServer()
-                .AddConfigurationStore(opts =>
+                .AddConfigurationStore(options =>
                 {
-                    opts.ConfigureDbContext = c => c.UseNpgsql(Configuration.GetConnectionString("DefaultConnection"), sqlopsts => sqlopsts.MigrationsAssembly(assemblyName));
+                    options.DefaultSchema = "ids4";
+                    options.ConfigureDbContext = b =>
+                        b.UseNpgsql(connectionString, sql =>
+                        {
+                            sql.MigrationsAssembly(migrationsAssembly);        
+                            sql.MigrationsHistoryTable("__EFMigrationsHistory", "ids4");
+                        });
                 })
                 .AddDeveloperSigningCredential()
                 .AddAspNetIdentity<ApplicationUser>()

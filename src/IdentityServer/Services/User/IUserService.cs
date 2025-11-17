@@ -20,6 +20,7 @@ namespace IdentityServer.Services.User
         Task<ApiResponse<bool>> DeleteUserRoleAsync(UserRoleRequestDto addUserRoleRequestDto);
         Task<ApiResponse<List<UserMenuResponseDto>>> GetUserMenusAsync(string userId);
         Task<ApiResponse<UserResponseDto>> GetUserByIdAsync(string id);
+        Task<ApiResponse<bool>> ChangePasswordAsync(string userId, string currentPassword, string newPassword);
+        Task<ApiResponse<UserContactResponseDto>> GetContactInfoByUserId(string userId);
 	}
 }
-

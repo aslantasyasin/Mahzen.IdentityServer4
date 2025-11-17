@@ -295,6 +295,68 @@ namespace IdentityServer.Services.User
             return response;
         }
 
+        public async Task<ApiResponse<bool>> ChangePasswordAsync(string userId, string currentPassword, string newPassword)
+        {
+            var response = new ApiResponse<bool>();
+            try
+            {
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
+                }
+                
+                if (string.IsNullOrEmpty(currentPassword))
+                {
+                    return ApiResponse<bool>.Fail("Mevcut şifreyi giriniz.");
+                }
+
+                IdentityResult result = await _userManager.ChangePasswordAsync(user, currentPassword, newPassword);
+
+                if (result.Succeeded)
+                {
+                    response.Data = true;
+                }
+                else
+                {
+                    foreach (var err in result.Errors)
+                        response.Errors.Add(err.Code);
+                }
+            }
+            catch (Exception ex)
+            {
+                response.Errors.Add(ex.Message);
+            }
+            return response;
+        }
+        
+        public async Task<ApiResponse<UserContactResponseDto>> GetContactInfoByUserId(string userId)
+        {
+            var response = new ApiResponse<UserContactResponseDto>();
+            try
+            {
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return ApiResponse<UserContactResponseDto>.Fail("Kullanıcı bulunamadı.");
+                }
+                
+                response.Data = new UserContactResponseDto
+                {
+                    Email = user.Email,
+                    PhoneNumber = user.PhoneNumber
+                };
+            }
+            catch (Exception ex)
+            {
+                response.Errors.Add(ex.Message);
+            }
+            
+            return response;
+        }
+        
+        
+
         private void UserMap(ApplicationUserUpdateRequestDto userRequestDto, ApplicationUser user)
         {
             if (userRequestDto.IsActive != null)
@@ -312,4 +374,3 @@ namespace IdentityServer.Services.User
         }
     }
 }
-

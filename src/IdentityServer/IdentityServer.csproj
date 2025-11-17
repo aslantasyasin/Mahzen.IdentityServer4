@@ -62,7 +62,6 @@
     <Folder Include="Models\Dto\" />
     <Folder Include="Services\Role\" />
     <Folder Include="Models\Dto\Role\" />
-    <Folder Include="Models\Dto\User\" />
     <Folder Include="Mapper\" />
     <Folder Include="Helper\" />
     <Folder Include="Middlewares\" />

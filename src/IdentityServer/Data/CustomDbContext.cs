@@ -39,6 +39,7 @@ namespace IdentityServer.Data
                 new ViewType() { Id = 4, Name = "Delete", TrName = "Silme" }
             );
             base.OnModelCreating(modelBuilder);
+            modelBuilder.HasDefaultSchema("ids4");
         }
     }
 }
