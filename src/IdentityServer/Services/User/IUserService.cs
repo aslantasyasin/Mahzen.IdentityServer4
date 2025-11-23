@@ -11,7 +11,7 @@ namespace IdentityServer.Services.User
 	public interface IUserService
 	{
         Task<ApiResponse<List<UserResponseDto>>> GetUsersAsync();
-        Task<ApiResponse<bool>> CreateUserAsync(ApplicationUserRequestDto userRequestDto);
+        Task<ApiResponse<string>> CreateUserAsync(ApplicationUserRequestDto userRequestDto);
         Task<ApiResponse<bool>> UpdateUserAsync(string userId, ApplicationUserUpdateRequestDto userRequestDto);
         Task<ApiResponse<bool>> DeleteUserAsync(string userId);
         Task<ApiResponse<bool>> UserIsActiveControlAsync(string userName);
@@ -22,5 +22,6 @@ namespace IdentityServer.Services.User
         Task<ApiResponse<UserResponseDto>> GetUserByIdAsync(string id);
         Task<ApiResponse<bool>> ChangePasswordAsync(string userId, string currentPassword, string newPassword);
         Task<ApiResponse<UserContactResponseDto>> GetContactInfoByUserId(string userId);
+        Task<ApiResponse<bool>> EmailVerified(string userId);
 	}
 }

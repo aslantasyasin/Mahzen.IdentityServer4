@@ -4,6 +4,7 @@ using System.Data;
 using System.Linq;
 using System.Security.Claims;
 using System.Threading.Tasks;
+using System.Windows.Markup;
 using AutoMapper;
 using IdentityServer.Models;
 using IdentityServer.Models.Base;
@@ -36,16 +37,16 @@ namespace IdentityServer.Services.User
             _customRepository = customRepository;
         }
 
-        public async Task<ApiResponse<bool>> CreateUserAsync(ApplicationUserRequestDto userRequestDto)
+        public async Task<ApiResponse<string>> CreateUserAsync(ApplicationUserRequestDto userRequestDto)
         {
-            var response = new ApiResponse<bool>();
+            var response = new ApiResponse<string>();
             try
             {
                 var getUserByEmail = await _userManager.FindByEmailAsync(userRequestDto.Email);
                 if (getUserByEmail != null)
                 {
                     var errorMessage = "Bu email ile daha önce kayıt yapılmış!";
-                    return ApiResponse<bool>.Fail(errorMessage);
+                    return ApiResponse<string>.Fail(errorMessage);
                 }
 
                 var getUserPhone = await _userManager.Users
@@ -54,7 +55,7 @@ namespace IdentityServer.Services.User
                 if (getUserPhone != null)
                 {
                     var errorMessage = "Bu telefon numarası ile daha önce kayıt yapılmış!";
-                    return ApiResponse<bool>.Fail(errorMessage);
+                    return ApiResponse<string>.Fail(errorMessage);
                 }
                 
                 userRequestDto.Id = Ulid.NewUlid().ToString();
@@ -73,7 +74,48 @@ namespace IdentityServer.Services.User
                     claims.Add(phoneNumberClaim);
 
                     var claimresult = await _userManager.AddClaimsAsync(map, claims);
-                    response.Data = addUserResult.Succeeded;
+
+                    if (!claimresult.Succeeded)
+                    {
+                        return ApiResponse<string>.Fail(claimresult.Errors?.First().Description);
+                    }
+                }
+                else
+                {
+                    return ApiResponse<string>.Fail(addUserResult.Errors?.First().Description);
+                }
+                
+                return ApiResponse<string>.Success(map.Id);
+            }
+            catch (Exception ex)
+            {
+                return ApiResponse<string>.Fail(ex.Message);
+            }
+        }
+        
+        public async Task<ApiResponse<bool>> EmailVerified(string userId)
+        {
+            var response = new ApiResponse<bool>();
+            try
+            {
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
+                }
+
+                user.EmailConfirmed = true;
+               
+                var result = await _userManager.UpdateAsync(user);
+
+                if (result.Succeeded)
+                {
+                    response.Data = true;
+                }
+                else
+                {
+                    foreach (var err in result.Errors)
+                        response.Errors.Add(err.Code);
                 }
             }
             catch (Exception ex)

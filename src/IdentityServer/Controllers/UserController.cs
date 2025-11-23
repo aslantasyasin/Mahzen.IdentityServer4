@@ -101,13 +101,24 @@ namespace IdentityServer.Controllers
             // Not: Controller'da [ApiController] varsa framework otomatik olarak model doğrulama hatalarında 400 döndürür.
             // Eğer özel bir hata formatı istiyorsanız Program.cs içinde ApiBehaviorOptions.SuppressModelStateInvalidFilter = true yapıp burada ModelState'i kontrol edebilirsiniz.
             
-
             var result = await _userService.CreateUserAsync(userRequestDto);
 
             if (result.HasError)
-                return BadRequest(result.Errors);
+                return BadRequest(result);
 
-            return Ok(result.Data);
+            return Ok(result);
+        }
+        
+        [HttpPost("EmailVerified")]
+        [AllowAnonymous]
+        public async Task<IActionResult> EmailVerified([FromBody]  string userId)
+        {
+            var result = await _userService.EmailVerified(userId);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
         }
 
         [HttpPost("ChangePassword")]
