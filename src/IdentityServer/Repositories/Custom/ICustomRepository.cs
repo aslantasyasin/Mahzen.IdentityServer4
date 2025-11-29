@@ -1,6 +1,7 @@
-﻿using System;
+﻿﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using IdentityServer.Models;
 using IdentityServer.Models.Custom;
 
 namespace IdentityServer.Repositories
@@ -9,6 +10,7 @@ namespace IdentityServer.Repositories
 	{
         Task<List<View>> GetAllViews();
         Task<List<ViewType>> GetAllViewTypes();
+        Task<List<UserChangeLog>> GetUserChangeLogs(string userId);
     }
 }
 

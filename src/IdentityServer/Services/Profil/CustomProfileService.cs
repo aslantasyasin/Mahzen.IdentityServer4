@@ -44,6 +44,7 @@ public class CustomProfileService : IProfileService
         AddIfRequested("phone_number", user.PhoneNumber);
         AddIfRequested("user_type", user.UserType.ToString());
         AddIfRequested("tenant_id", user.TenantId.ToString());
+        AddIfRequested("email_confirmed", user.EmailConfirmed.ToString());
     }
 
     public async Task IsActiveAsync(IsActiveContext context)

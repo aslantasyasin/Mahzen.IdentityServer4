@@ -136,6 +136,32 @@ namespace IdentityServer.Controllers
 
             return Ok(result);
         }
+
+        [HttpPost("UpdateEmail")]
+        public async Task<IActionResult> UpdateEmail([FromBody] UpdateEmailRequestDto model)
+        {
+            var result = await _userService.UpdateEmailAsync(model);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
+        
+        [HttpGet("GetChangeLogs")]
+        public async Task<IActionResult> GetUserChangeLogs()
+        {
+            var userId = User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return BadRequest(new[] { "Token'dan kullanıcı id alınamadı." });
+
+            var result = await _userService.GetUserChangeLogsAsync(userId);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
         
         [HttpGet("GetEmail/{userId}")]
         [AllowAnonymous]

@@ -1,4 +1,4 @@
-﻿using System.Xml.Linq;
+﻿﻿using System.Xml.Linq;
 using IdentityServer.Models;
 using IdentityServer.Models.Custom;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +13,7 @@ namespace IdentityServer.Data
 
         public DbSet<View> View { get; set; }
         public DbSet<ViewType> ViewType { get; set; }
+        public DbSet<UserChangeLog> UserChangeLogs { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -38,6 +39,15 @@ namespace IdentityServer.Data
                 new ViewType() { Id = 3, Name = "Create", TrName = "Ekleme" },
                 new ViewType() { Id = 4, Name = "Delete", TrName = "Silme" }
             );
+            
+            // UserChangeLog için FK ilişkisi olmamalı (farklı DbContext'te)
+            modelBuilder.Entity<UserChangeLog>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.UserId).IsRequired();
+                // FK yok - sadece string olarak UserId tutuyoruz
+            });
+            
             base.OnModelCreating(modelBuilder);
             modelBuilder.HasDefaultSchema("ids4");
         }

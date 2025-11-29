@@ -27,14 +27,16 @@ namespace IdentityServer.Services.User
         private readonly IMapper _mapper;
         private readonly IIdentityRepository _identityRepository;
         private readonly ICustomRepository _customRepository;
+        private readonly IUserChangeLogService _userChangeLogService;
 
-        public UserService(UserManager<ApplicationUser> userManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository)
+        public UserService(UserManager<ApplicationUser> userManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService)
         {
             _userManager = userManager;
             _userInfo = new UserInfo(serviceScopeFactory);
             _mapper = mapper;
             _identityRepository = identityRepository;
             _customRepository = customRepository;
+            _userChangeLogService = userChangeLogService;
         }
 
         public async Task<ApiResponse<string>> CreateUserAsync(ApplicationUserRequestDto userRequestDto)
@@ -205,6 +207,14 @@ namespace IdentityServer.Services.User
             try
             {
                 var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
+                }
+
+                // Değişiklikleri logla
+                await LogUserChangesAsync(user, userRequestDto, _userInfo.UserId);
+                
                 UserMap(userRequestDto, user);
                 var updateUserResult = await _userManager.UpdateAsync(user);
 
@@ -357,6 +367,8 @@ namespace IdentityServer.Services.User
 
                 if (result.Succeeded)
                 {
+                    // Şifre değişikliğini logla (şifreleri kaydetme, sadece bilgi)
+                    await _userChangeLogService.LogChangeAsync(userId, "Password", "***", "***", _userInfo.UserId);
                     response.Data = true;
                 }
                 else
@@ -397,7 +409,160 @@ namespace IdentityServer.Services.User
             return response;
         }
         
+        public async Task<ApiResponse<List<UserChangeLogResponseDto>>> GetUserChangeLogsAsync(string userId)
+        {
+            var response = new ApiResponse<List<UserChangeLogResponseDto>>();
+            try
+            {
+                var logs = await _customRepository.GetUserChangeLogs(userId);
+                response.Data = _mapper.Map<List<UserChangeLogResponseDto>>(logs);
+            }
+            catch (Exception ex)
+            {
+                response.Errors.Add(ex.Message);
+            }
+            return response;
+        }
         
+        public async Task<ApiResponse<bool>> UpdateEmailAsync(UpdateEmailRequestDto model)
+        {
+            var response = new ApiResponse<bool>();
+            
+            // Token'dan kullanıcı id kontrolü
+            var userId = _userInfo.UserId;
+            if (string.IsNullOrEmpty(userId))
+            {
+                return ApiResponse<bool>.Fail("Token'dan kullanıcı id alınamadı.");
+            }
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null)
+            {
+                return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
+            }
+
+            // Email zaten kullanılıyor mu kontrol et
+            var existingUser = await _userManager.FindByEmailAsync(model.Email);
+            if (existingUser != null && existingUser.Id != userId)
+            {
+                return ApiResponse<bool>.Fail("Bu email adresi başka bir kullanıcı tarafından kullanılmaktadır.");
+            }
+
+            // Eski değerleri sakla (loglama için)
+            var oldEmail = user.Email;
+            var oldUserName = user.UserName;
+            var isUsernameChanged = user.UserName == oldEmail;
+
+            // TransactionScope ile atomik işlem
+            using (var scope = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeOption.Required,
+                new System.Transactions.TransactionOptions 
+                { 
+                    IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted 
+                },
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            {
+                try
+                {
+                    // 1. Email güncelle
+                    var token = await _userManager.GenerateChangeEmailTokenAsync(user, model.Email);
+                    var emailChangeResult = await _userManager.ChangeEmailAsync(user, model.Email, token);
+
+                    if (!emailChangeResult.Succeeded)
+                    {
+                        foreach (var err in emailChangeResult.Errors)
+                            response.Errors.Add(err.Description);
+                        return response;
+                    }
+
+                    // 2. UserName'i de email ile senkronize et (eğer gerekirse)
+                    if (isUsernameChanged)
+                    {
+                        user.UserName = model.Email;
+                        var usernameUpdateResult = await _userManager.UpdateAsync(user);
+                        
+                        if (!usernameUpdateResult.Succeeded)
+                        {
+                            response.Errors.Add("UserName güncellenirken hata oluştu.");
+                            foreach (var err in usernameUpdateResult.Errors)
+                                response.Errors.Add(err.Description);
+                            // Transaction scope dispose olacak, otomatik rollback
+                            return response;
+                        }
+                    }
+
+                    // 3. Email doğrulamasını sıfırla
+                    user.EmailConfirmed = false;
+                    var emailConfirmUpdateResult = await _userManager.UpdateAsync(user);
+
+                    if (!emailConfirmUpdateResult.Succeeded)
+                    {
+                        response.Errors.Add("Email doğrulaması güncellenirken hata oluştu.");
+                        foreach (var err in emailConfirmUpdateResult.Errors)
+                            response.Errors.Add(err.Description);
+                        // Transaction scope dispose olacak, otomatik rollback
+                        return response;
+                    }
+
+                    // 4. Değişiklikleri logla
+                    await _userChangeLogService.LogChangeAsync(userId, "Email", oldEmail, model.Email, userId);
+                    
+                    if (isUsernameChanged)
+                    {
+                        await _userChangeLogService.LogChangeAsync(userId, "UserName", oldUserName, model.Email, userId);
+                    }
+
+                    // Tüm işlemler başarılı, transaction'ı commit et
+                    scope.Complete();
+                    response.Data = true;
+                }
+                catch (Exception ex)
+                {
+                    // Transaction otomatik rollback olacak
+                    response.Errors.Add($"Email güncelleme sırasında hata oluştu: {ex.Message}");
+                }
+            }
+            
+            return response;
+        }
+
+        private async Task LogUserChangesAsync(ApplicationUser user, ApplicationUserUpdateRequestDto userRequestDto, string changedBy)
+        {
+            if (userRequestDto.IsActive != null && user.IsActive != userRequestDto.IsActive)
+            {
+                await _userChangeLogService.LogChangeAsync(user.Id, "IsActive", user.IsActive.ToString(), userRequestDto.IsActive.ToString(), changedBy);
+            }
+
+            if (userRequestDto.UserName != null && user.UserName != userRequestDto.UserName)
+            {
+                await _userChangeLogService.LogChangeAsync(user.Id, "UserName", user.UserName, userRequestDto.UserName, changedBy);
+            }
+
+            if (userRequestDto.FirstName != null && user.FirstName != userRequestDto.FirstName)
+            {
+                await _userChangeLogService.LogChangeAsync(user.Id, "FirstName", user.FirstName, userRequestDto.FirstName, changedBy);
+            }
+
+            if (userRequestDto.LastName != null && user.LastName != userRequestDto.LastName)
+            {
+                await _userChangeLogService.LogChangeAsync(user.Id, "LastName", user.LastName, userRequestDto.LastName, changedBy);
+            }
+
+            if (userRequestDto.UserType != null && user.UserType != userRequestDto.UserType)
+            {
+                await _userChangeLogService.LogChangeAsync(user.Id, "UserType", user.UserType.ToString(), userRequestDto.UserType.ToString(), changedBy);
+            }
+
+            if (userRequestDto.Email != null && user.Email != userRequestDto.Email)
+            {
+                await _userChangeLogService.LogChangeAsync(user.Id, "Email", user.Email, userRequestDto.Email, changedBy);
+            }
+
+            if (userRequestDto.PhoneNumber != null && user.PhoneNumber != userRequestDto.PhoneNumber)
+            {
+                await _userChangeLogService.LogChangeAsync(user.Id, "PhoneNumber", user.PhoneNumber, userRequestDto.PhoneNumber, changedBy);
+            }
+        }
 
         private void UserMap(ApplicationUserUpdateRequestDto userRequestDto, ApplicationUser user)
         {
@@ -413,6 +578,8 @@ namespace IdentityServer.Services.User
                 user.UserType = userRequestDto.UserType ?? UserType.Default;
             if (userRequestDto.Email != null)
                 user.Email = userRequestDto.Email;
+            if (userRequestDto.PhoneNumber != null)
+                user.PhoneNumber = userRequestDto.PhoneNumber;
         }
     }
 }

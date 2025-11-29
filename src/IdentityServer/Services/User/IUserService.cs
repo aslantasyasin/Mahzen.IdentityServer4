@@ -23,5 +23,7 @@ namespace IdentityServer.Services.User
         Task<ApiResponse<bool>> ChangePasswordAsync(string userId, string currentPassword, string newPassword);
         Task<ApiResponse<UserContactResponseDto>> GetContactInfoByUserId(string userId);
         Task<ApiResponse<bool>> EmailVerified(string userId);
+        Task<ApiResponse<bool>> UpdateEmailAsync(UpdateEmailRequestDto model);
+        Task<ApiResponse<List<UserChangeLogResponseDto>>> GetUserChangeLogsAsync(string userId);
 	}
 }

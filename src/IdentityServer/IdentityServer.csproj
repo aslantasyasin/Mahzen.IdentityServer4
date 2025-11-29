@@ -68,7 +68,6 @@
     <Folder Include="Models\Custom\" />
     <Folder Include="Models\Custom\Base\" />
     <Folder Include="Repositories\" />
-    <Folder Include="Services\User\" />
     <Folder Include="Repositories\" />
     <Folder Include="Repositories\Custom\" />
     <Folder Include="Repositories\Identity\" />

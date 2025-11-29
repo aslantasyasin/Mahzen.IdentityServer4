@@ -49,6 +49,7 @@ namespace IdentityServer
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IIdentityRepository, IdentityRepository>();
             services.AddScoped<IHybridRepository, HybridRepository>();
+            services.AddScoped<IUserChangeLogService, UserChangeLogService>();
             
             ///automapper
 

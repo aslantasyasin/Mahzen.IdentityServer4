@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using System.Security.Claims;
 using AutoMapper;
 using IdentityServer.Models;
@@ -19,6 +19,7 @@ namespace IdentityServer.Mapper
 			CreateMap<UserResponseDto, ApplicationUser>().ReverseMap();
             CreateMap<ApplicationUserRequestDto, ApplicationUser>().ReverseMap();
 			CreateMap<ApplicationUserUpdateRequestDto, ApplicationUser>().PreserveReferences();
+			CreateMap<UserChangeLog, UserChangeLogResponseDto>().ReverseMap();
     //            .ForMember(dest => dest.IsActive, opt => opt.Ignore())
     //            .ForMember(dest => dest.UserName, opt => opt.MapFrom(src => src.UserName != null ? src.UserName : null))
 				//.ForMember(dest => dest.FirstName, opt => opt.MapFrom(src => src.UserName != null ? src.UserName : null))

@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using Microsoft.AspNetCore.Http;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -14,10 +14,11 @@ namespace IdentityServer.Models
         public UserInfo(IServiceScopeFactory serviceScope)
 		{
 			_serviceScope = serviceScope;
-            // this.PropSetInfo();
+            PropSetInfo();
 		}
 
 		public int TenantId { get; set; }
+		public string UserId { get; set; }
 
 		private void PropSetInfo()
 		{
@@ -36,8 +37,13 @@ namespace IdentityServer.Models
                 if(tenantIdClaim != null)
                 {
                     string tenantid = tenantIdClaim?.Value;
-
                     this.TenantId = int.Parse(tenantid);
+                }
+                
+                Claim userIdClaim = jwtSecurityToken.Claims.FirstOrDefault(c => c.Type == "sub");
+                if(userIdClaim != null)
+                {
+                    this.UserId = userIdClaim?.Value;
                 }
             }
         }
