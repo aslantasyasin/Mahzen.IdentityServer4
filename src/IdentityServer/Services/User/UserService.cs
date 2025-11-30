@@ -525,6 +525,124 @@ namespace IdentityServer.Services.User
             
             return response;
         }
+        
+        public async Task<ApiResponse<bool>> UpdateProfileInfoAsync(UpdateProfileInfoRequestDto model)
+        {
+            var response = new ApiResponse<bool>();
+            
+            // Token'dan kullanıcı id kontrolü
+            var userId = _userInfo.UserId;
+            if (string.IsNullOrEmpty(userId))
+            {
+                return ApiResponse<bool>.Fail("Token'dan kullanıcı id alınamadı.");
+            }
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null)
+            {
+                return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
+            }
+
+            // Telefon numarası değişiyorsa ve başka kullanıcıda varsa kontrol et
+            if (!string.IsNullOrEmpty(model.PhoneNumber) && model.PhoneNumber != user.PhoneNumber)
+            {
+                var existingUser = await _userManager.Users
+                    .FirstOrDefaultAsync(u => u.PhoneNumber == model.PhoneNumber && u.Id != userId);
+                
+                if (existingUser != null)
+                {
+                    return ApiResponse<bool>.Fail("Bu telefon numarası başka bir kullanıcı tarafından kullanılmaktadır.");
+                }
+            }
+
+            // Eski değerleri sakla
+            var oldFirstName = user.FirstName;
+            var oldLastName = user.LastName;
+            var oldPhoneNumber = user.PhoneNumber;
+            
+            // Değişiklik var mı kontrol et
+            var hasChanges = false;
+            if (!string.IsNullOrEmpty(model.FirstName) && model.FirstName != oldFirstName) hasChanges = true;
+            if (!string.IsNullOrEmpty(model.LastName) && model.LastName != oldLastName) hasChanges = true;
+            if (!string.IsNullOrEmpty(model.PhoneNumber) && model.PhoneNumber != oldPhoneNumber) hasChanges = true;
+
+            if (!hasChanges)
+            {
+                response.Data = true;
+                return response;
+            }
+
+            // TransactionScope ile atomik işlem
+            using (var scope = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeOption.Required,
+                new System.Transactions.TransactionOptions 
+                { 
+                    IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted 
+                },
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            {
+                try
+                {
+                    // 1. FirstName güncelle
+                    if (!string.IsNullOrEmpty(model.FirstName) && model.FirstName != oldFirstName)
+                    {
+                        user.FirstName = model.FirstName;
+                    }
+
+                    // 2. LastName güncelle
+                    if (!string.IsNullOrEmpty(model.LastName) && model.LastName != oldLastName)
+                    {
+                        user.LastName = model.LastName;
+                    }
+
+                    // 3. PhoneNumber güncelle
+                    var phoneNumberChanged = false;
+                    if (!string.IsNullOrEmpty(model.PhoneNumber) && model.PhoneNumber != oldPhoneNumber)
+                    {
+                        user.PhoneNumber = model.PhoneNumber;
+                        user.PhoneNumberConfirmed = false;
+                        phoneNumberChanged = true;
+                    }
+
+                    // 4. Kullanıcıyı güncelle
+                    var updateResult = await _userManager.UpdateAsync(user);
+
+                    if (!updateResult.Succeeded)
+                    {
+                        foreach (var err in updateResult.Errors)
+                            response.Errors.Add(err.Description);
+                        return response;
+                    }
+
+                    // 5. Değişiklikleri logla
+                    if (!string.IsNullOrEmpty(model.FirstName) && model.FirstName != oldFirstName)
+                    {
+                        await _userChangeLogService.LogChangeAsync(userId, "FirstName", oldFirstName, model.FirstName, userId);
+                    }
+
+                    if (!string.IsNullOrEmpty(model.LastName) && model.LastName != oldLastName)
+                    {
+                        await _userChangeLogService.LogChangeAsync(userId, "LastName", oldLastName, model.LastName, userId);
+                    }
+
+                    if (phoneNumberChanged)
+                    {
+                        await _userChangeLogService.LogChangeAsync(userId, "PhoneNumber", oldPhoneNumber, model.PhoneNumber, userId);
+                    }
+
+                    // Tüm işlemler başarılı, transaction'ı commit et
+                    scope.Complete();
+                    response.Data = true;
+                }
+                catch (Exception ex)
+                {
+                    // Transaction otomatik rollback olacak
+                    response.Errors.Add($"Profil bilgileri güncelleme sırasında hata oluştu: {ex.Message}");
+                }
+            }
+            
+            return response;
+        }
 
         private async Task LogUserChangesAsync(ApplicationUser user, ApplicationUserUpdateRequestDto userRequestDto, string changedBy)
         {

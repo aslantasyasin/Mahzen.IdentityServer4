@@ -24,6 +24,7 @@ namespace IdentityServer.Services.User
         Task<ApiResponse<UserContactResponseDto>> GetContactInfoByUserId(string userId);
         Task<ApiResponse<bool>> EmailVerified(string userId);
         Task<ApiResponse<bool>> UpdateEmailAsync(UpdateEmailRequestDto model);
+        Task<ApiResponse<bool>> UpdateProfileInfoAsync(UpdateProfileInfoRequestDto model);
         Task<ApiResponse<List<UserChangeLogResponseDto>>> GetUserChangeLogsAsync(string userId);
 	}
 }

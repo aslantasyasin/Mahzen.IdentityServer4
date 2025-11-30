@@ -148,6 +148,17 @@ namespace IdentityServer.Controllers
             return Ok(result);
         }
         
+        [HttpPost("UpdateProfileInfo")]
+        public async Task<IActionResult> UpdateProfileInfo([FromBody] UpdateProfileInfoRequestDto model)
+        {
+            var result = await _userService.UpdateProfileInfoAsync(model);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
+        
         [HttpGet("GetChangeLogs")]
         public async Task<IActionResult> GetUserChangeLogs()
         {
