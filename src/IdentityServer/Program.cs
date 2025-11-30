@@ -84,7 +84,34 @@ namespace IdentityServer
                 .UseSerilog()
                 .ConfigureWebHostDefaults(webBuilder =>
                 {
-                    webBuilder.UseUrls("http://localhost:5000", "https://localhost:5001");
+                    // Kestrel ile HTTP (80) ve HTTPS (443) endpoint’lerini ayarla
+                    webBuilder.ConfigureKestrel(options =>
+                    {
+                        // HTTP – istersen kapatabilirsin ama genelde iç trafiğe yarıyor
+                        options.ListenAnyIP(80);
+
+                        // HTTPS – PFX dosyasını /certs altından, şifreyi env’den al
+                        options.ListenAnyIP(443, listenOptions =>
+                        {
+                            var certPath = "/certs/mahzen-ids4.pfx";
+                            var certPassword = Environment.GetEnvironmentVariable("CERT_PASSWORD");
+
+                            if (string.IsNullOrEmpty(certPassword))
+                            {
+                                // Muhtemelen local development ortamındasın:
+                                // ASP.NET Core'un kendi dev sertifikasını kullan
+                                // (önceden bir kere `dotnet dev-certs https --trust` çalıştırmış olman lazım)
+                                listenOptions.UseHttps();
+                            }
+                            else
+                            {
+                                // Kubernetes / prod: PFX + şifre ile çalış
+                                listenOptions.UseHttps(certPath, certPassword);
+                            }
+                        });
+                    });
+
+                    // Artık UseUrls'a gerek yok, endpoint’leri Kestrel üzerinden yönetiyoruz
                     webBuilder.UseStartup<Startup>();
                 });
     }
