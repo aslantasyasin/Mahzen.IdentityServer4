@@ -155,7 +155,7 @@ namespace IdentityServer
                     ResponseWriter = async (context, report) =>
                     {
 
-                        await context.Response.WriteAsync("health");
+                        await context.Response.WriteAsync("health-test-1");
                     }
                 });
             });
