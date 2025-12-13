@@ -23,7 +23,7 @@ jobs:
           IMAGE_LATEST=$IMAGE_BASE:latest
           
           # Docker image'i build et (her iki tag ile)
-          docker build --platform linux/amd64 -f Dockerfile -t $IMAGE_TAGGED -t $IMAGE_LATEST .
+          docker build --platform linux/amd64 -f src/IdentityServer/Dockerfile -t $IMAGE_TAGGED -t $IMAGE_LATEST .
           
           # Her iki tag'i de push et
           docker push $IMAGE_TAGGED
