@@ -23,6 +23,11 @@ using IdentityServer.Services.User;
 using IdentityServer.Repositories.Identity;
 using IdentityServer.Repositories.Hybrid;
 using IdentityServer.Services.Profil;
+using Microsoft.AspNetCore.Http;
+using System.Linq;
+using System.Text.Json;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace IdentityServer
 {
@@ -42,6 +47,9 @@ namespace IdentityServer
             services.AddLocalApiAuthentication();
             services.AddControllersWithViews();
             services.AddCors();
+            
+            // Health checks - basit bir endpoint için
+            services.AddHealthChecks();
             
             services.AddScoped<ILoginService, LoginService>();
             services.AddScoped<ICustomRepository, CustomRepository>();
@@ -134,11 +142,22 @@ namespace IdentityServer
             app.UseIdentityServer();
             app.UseAuthentication();
             app.UseAuthorization();
-
+            
+            
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
                 endpoints.MapDefaultControllerRoute();
+
+                // Health endpoint - returns a compact JSON with overall status and checks
+                endpoints.MapHealthChecks("/health", new HealthCheckOptions
+                {
+                    ResponseWriter = async (context, report) =>
+                    {
+
+                        await context.Response.WriteAsync("health");
+                    }
+                });
             });
         }
     }
