@@ -3,6 +3,12 @@ WORKDIR /app
 EXPOSE 80
 EXPOSE 443
 
+# Kestrel HTTPS için environment değişkenleri
+ENV ASPNETCORE_URLS="https://0.0.0.0:443;http://0.0.0.0:80"
+ENV ASPNETCORE_ENVIRONMENT=Production
+ENV ASPNETCORE_Kestrel__Certificates__Default__Path="/certs/ids4.pfx"
+ENV ASPNETCORE_Kestrel__Certificates__Default__Password="S3cureP@ss!"
+
 FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src

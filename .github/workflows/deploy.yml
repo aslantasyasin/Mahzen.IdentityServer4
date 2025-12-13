@@ -1,0 +1,51 @@
+name: Deploy IDS4
+on:
+  push:
+    branches: [ "main" ]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Login GitLab Registry
+        uses: docker/login-action@v2
+        with:
+          registry: registry.gitlab.com
+          username: ${{ secrets.GITLAB_REGISTRY_USERNAME }}
+          password: ${{ secrets.GITLAB_REGISTRY_PASSWORD }}
+      
+      - name: Build & Push
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+          IMAGE_BASE=${{ secrets.GITLAB_IMAGE_BASE }}/mahzen-ids4
+          IMAGE_TAGGED=$IMAGE_BASE:$IMAGE_TAG
+          IMAGE_LATEST=$IMAGE_BASE:latest
+          
+          # Docker image'i build et (her iki tag ile)
+          docker build --platform linux/amd64 -f Dockerfile -t $IMAGE_TAGGED -t $IMAGE_LATEST .
+          
+          # Her iki tag'i de push et
+          docker push $IMAGE_TAGGED
+          docker push $IMAGE_LATEST
+          
+          echo "✅ Images pushed successfully"
+      
+      - name: Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_SSH_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            echo "🚀 Triggering deployment update..."
+            
+            # Timestamp annotation ekleyerek zorla güncelleme
+            kubectl patch deployment mahzen-ids4 -n mahzen-dev -p \
+              "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"deployedAt\":\"$(date +%s)\",\"commit\":\"${GITHUB_SHA::7}\"}}}}}"
+            
+            echo "⏳ Waiting for rollout to complete..."
+            kubectl rollout status deployment/mahzen-ids4 -n mahzen-dev --timeout=5m
+            
+            echo "✅ Deployment successful!"
+            kubectl get pods -n mahzen-dev -l app=mahzen-ids4

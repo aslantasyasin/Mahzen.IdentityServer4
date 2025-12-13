@@ -1,8 +1,4 @@
-﻿// Copyright (c) Brock Allen & Dominick Baier. All rights reserved.
-// Licensed under the Apache License, Version 2.0. See LICENSE in the project root for license information.
-
-
-using IdentityServer.SeedDatas;
+﻿using IdentityServer.SeedDatas;
 using IdentityServer4.EntityFramework.DbContexts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -84,31 +80,42 @@ namespace IdentityServer
                 .UseSerilog()
                 .ConfigureWebHostDefaults(webBuilder =>
                 {
-                    // Kestrel ile HTTP (80) ve HTTPS (443) endpoint’lerini ayarla
-                    webBuilder.ConfigureKestrel(options =>
+                    // Kestrel ile ortam bazlı endpoint ayarlamaları
+                    webBuilder.ConfigureKestrel((context, options) =>
                     {
-                        // HTTP – istersen kapatabilirsin ama genelde iç trafiğe yarıyor
-                        options.ListenAnyIP(80);
+                        var env = context.HostingEnvironment;
 
-                        // HTTPS – PFX dosyasını /certs altından, şifreyi env’den al
-                        options.ListenAnyIP(443, listenOptions =>
+                        if (env.IsDevelopment())
                         {
-                            var certPath = "/certs/mahzen-ids4.pfx";
-                            var certPassword = Environment.GetEnvironmentVariable("CERT_PASSWORD");
-
-                            if (string.IsNullOrEmpty(certPassword))
+                            // Development: yalnızca localhost üzerinde 5000 (http) ve 5001 (https)
+                            // Böylece makinedeki genel port çakışmaları azaltılır
+                            options.ListenLocalhost(5000); // HTTP dev (localhost)
+                            options.ListenLocalhost(5001, listenOptions =>
                             {
-                                // Muhtemelen local development ortamındasın:
-                                // ASP.NET Core'un kendi dev sertifikasını kullan
-                                // (önceden bir kere `dotnet dev-certs https --trust` çalıştırmış olman lazım)
+                                // Local development'da dotnet dev-certs varsa bu çağrı dev sertifikayı kullanır
                                 listenOptions.UseHttps();
-                            }
-                            else
+                            });
+                        }
+                        else
+                        {
+                            // Production / diğer ortamlarda: AnyIP üzerinden 80/443
+                            options.ListenAnyIP(80);
+
+                            options.ListenAnyIP(443, listenOptions =>
                             {
-                                // Kubernetes / prod: PFX + şifre ile çalış
-                                listenOptions.UseHttps(certPath, certPassword);
-                            }
-                        });
+                                var certPath = "/certs/mahzen-ids4.pfx";
+                                var certPassword = Environment.GetEnvironmentVariable("CERT_PASSWORD");
+
+                                if (string.IsNullOrEmpty(certPassword))
+                                {
+                                    listenOptions.UseHttps();
+                                }
+                                else
+                                {
+                                    listenOptions.UseHttps(certPath, certPassword);
+                                }
+                            });
+                        }
                     });
 
                     // Artık UseUrls'a gerek yok, endpoint’leri Kestrel üzerinden yönetiyoruz
