@@ -28,6 +28,8 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using NuGet.Commands;
+using Serilog;
 
 namespace IdentityServer
 {
@@ -154,7 +156,7 @@ namespace IdentityServer
                 {
                     ResponseWriter = async (context, report) =>
                     {
-
+                        Log.Information("IdentityServer Health check çağrıldı.");
                         await context.Response.WriteAsync("health-test-1");
                     }
                 });
