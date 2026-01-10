@@ -102,9 +102,25 @@ namespace IdentityServer
                     options.ConfigureDbContext = b =>
                         b.UseNpgsql(connectionString, sql =>
                         {
-                            sql.MigrationsAssembly(migrationsAssembly);        
+                            sql.MigrationsAssembly(migrationsAssembly);
                             sql.MigrationsHistoryTable("__EFMigrationsHistory", "ids4");
                         });
+                })
+                // Operational Store: PersistedGrants (refresh_token, consent, device_code, reference tokens vs.)
+                .AddOperationalStore(options =>
+                {
+                    options.DefaultSchema = "ids4";
+                    options.ConfigureDbContext = b =>
+                        b.UseNpgsql(connectionString, sql =>
+                        {
+                            sql.MigrationsAssembly(migrationsAssembly);
+                            sql.MigrationsHistoryTable("__EFMigrationsHistory", "ids4");
+                        });
+
+                    
+                    options.EnableTokenCleanup = true;
+                    
+                    options.TokenCleanupInterval = 3600;
                 })
                 .AddDeveloperSigningCredential()
                 .AddAspNetIdentity<ApplicationUser>()
