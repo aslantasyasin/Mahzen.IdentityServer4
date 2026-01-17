@@ -62,18 +62,17 @@ namespace IdentityServer.Services.User
                 
                 userRequestDto.Id = Ulid.NewUlid().ToString();
                 userRequestDto.UserName = userRequestDto.Email;
-                userRequestDto.TenantId = 1;
                 userRequestDto.IsActive = true;
                 var map = _mapper.Map<ApplicationUserRequestDto, ApplicationUser>(userRequestDto);
                 var addUserResult = await _userManager.CreateAsync(map, userRequestDto.Password);
                 if (addUserResult.Succeeded)
                 {
                     var claims = new List<Claim>();
-                    var tenantClaim = new Claim("tenantid", _userInfo.TenantId.ToString());
-                    var phoneNumberClaim = new Claim("phone_number", map.UserName);
+                    var tenantClaim = new Claim("tenant_id", map.TenantId.ToString());
+                    var userTypeClaim = new Claim("user_type", map.UserType.ToString());
 
                     claims.Add(tenantClaim);
-                    claims.Add(phoneNumberClaim);
+                    claims.Add(userTypeClaim);
 
                     var claimresult = await _userManager.AddClaimsAsync(map, claims);
 
