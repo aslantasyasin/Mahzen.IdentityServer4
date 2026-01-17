@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root for license information.
 
 
+using System;
 using IdentityServer4;
 using IdentityServer.Data;
 using IdentityServer.Models;
@@ -26,6 +27,8 @@ using IdentityServer.Services.Profil;
 using Microsoft.AspNetCore.Http;
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NuGet.Commands;
@@ -49,10 +52,10 @@ namespace IdentityServer
             services.AddLocalApiAuthentication();
             services.AddControllersWithViews();
             services.AddCors();
-            
+
             // Health checks - basit bir endpoint için
             services.AddHealthChecks();
-            
+
             services.AddScoped<ILoginService, LoginService>();
             services.AddScoped<ICustomRepository, CustomRepository>();
             services.AddScoped<IRoleService, RoleService>();
@@ -60,7 +63,7 @@ namespace IdentityServer
             services.AddScoped<IIdentityRepository, IdentityRepository>();
             services.AddScoped<IHybridRepository, HybridRepository>();
             services.AddScoped<IUserChangeLogService, UserChangeLogService>();
-            
+
             ///automapper
 
             services.AddAutoMapper(typeof(Startup));
@@ -94,7 +97,7 @@ namespace IdentityServer
 
             var connectionString = Configuration.GetConnectionString("DefaultConnection");
             var migrationsAssembly = typeof(Startup).Assembly.GetName().Name;
-            
+
             var builder = services.AddIdentityServer()
                 .AddConfigurationStore(options =>
                 {
@@ -117,27 +120,53 @@ namespace IdentityServer
                             sql.MigrationsHistoryTable("__EFMigrationsHistory", "ids4");
                         });
 
-                    
+
                     options.EnableTokenCleanup = true;
-                    
+
                     options.TokenCleanupInterval = 3600;
                 })
                 .AddDeveloperSigningCredential()
                 .AddAspNetIdentity<ApplicationUser>()
                 .AddProfileService<CustomProfileService>();
-                //.AddResourceOwnerValidator<ResourceOwnerPasswordValidator>();
-                
+            //.AddResourceOwnerValidator<ResourceOwnerPasswordValidator>();q
 
-            services.AddAuthentication()
-                .AddGoogle(options =>
+
+            services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                .AddJwtBearer(options =>
                 {
-                    options.SignInScheme = IdentityServerConstants.ExternalCookieAuthenticationScheme;
+                    var identityAuth = Configuration.GetSection("ExternalServices").GetSection("IDS4Service")
+                        .GetValue<string>("BaseUrl");
+                    options.Authority = identityAuth;
+                    options.Audience = "auth-api";
+                    options.TokenValidationParameters.ValidIssuer = identityAuth;
+                    options.TokenValidationParameters.ValidateAudience = true;
+                    options.TokenValidationParameters.ValidateIssuer = true;
+                    options.TokenValidationParameters.ValidateLifetime = true;
                     
-                    // register your IdentityServer with Google at https://console.developers.google.com
-                    // enable the Google+ API
-                    // set the redirect URI to https://localhost:5001/signin-google
-                    options.ClientId = "copy client ID from Google here";
-                    options.ClientSecret = "copy client secret from Google here";
+                    options.Events = new JwtBearerEvents()
+                    {
+                        OnAuthenticationFailed = c =>
+                        {
+                            var authHeader = c.Request.Headers["Authorization"].ToString();
+
+                            string token = null;
+                            if (!string.IsNullOrWhiteSpace(authHeader) &&
+                                authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                            {
+                                token = authHeader.Substring("Bearer ".Length).Trim();
+                            }
+
+                            // Tam token yerine maskele (PII/sızıntı riskini azaltır)
+                            string tokenMasked = token == null
+                                ? null
+                                : (token.Length <= 20
+                                    ? "****"
+                                    : $"{token.Substring(0, 10)}...{token.Substring(token.Length - 10)}");
+
+                            Log.Error(c.Exception, "Authorize failed. TokenMasked: {TokenMasked}", tokenMasked);
+                            return Task.CompletedTask;
+                        }
+                    };
                 });
         }
 
@@ -151,17 +180,17 @@ namespace IdentityServer
 
             app.UseStaticFiles();
             app.UseCors(corsPolicyBuilder =>
-                           corsPolicyBuilder.AllowAnyOrigin()
-                          .AllowAnyMethod()
-                          .AllowAnyHeader());
+                corsPolicyBuilder.AllowAnyOrigin()
+                    .AllowAnyMethod()
+                    .AllowAnyHeader());
 
             app.UseRouting();
 
             app.UseIdentityServer();
             app.UseAuthentication();
             app.UseAuthorization();
-            
-            
+
+
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
