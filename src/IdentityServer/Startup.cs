@@ -28,6 +28,7 @@ using Microsoft.AspNetCore.Http;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using IdentityServer.Validators;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -63,7 +64,7 @@ namespace IdentityServer
             services.AddScoped<IIdentityRepository, IdentityRepository>();
             services.AddScoped<IHybridRepository, HybridRepository>();
             services.AddScoped<IUserChangeLogService, UserChangeLogService>();
-
+    
             ///automapper
 
             services.AddAutoMapper(typeof(Startup));
@@ -127,7 +128,8 @@ namespace IdentityServer
                 })
                 .AddDeveloperSigningCredential()
                 .AddAspNetIdentity<ApplicationUser>()
-                .AddProfileService<CustomProfileService>();
+                .AddProfileService<CustomProfileService>()
+                .AddResourceOwnerValidator<CustomResourceOwnerPasswordValidator>();
             //.AddResourceOwnerValidator<ResourceOwnerPasswordValidator>();q
 
 
