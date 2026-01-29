@@ -23,13 +23,14 @@ namespace IdentityServer.Services.User
     public class UserService : IUserService
     {
         private readonly UserManager<ApplicationUser> _userManager;
+        private readonly RoleManager<ApplicationRole> _roleManager;
         private readonly UserInfo _userInfo;
         private readonly IMapper _mapper;
         private readonly IIdentityRepository _identityRepository;
         private readonly ICustomRepository _customRepository;
         private readonly IUserChangeLogService _userChangeLogService;
 
-        public UserService(UserManager<ApplicationUser> userManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService)
+        public UserService(UserManager<ApplicationUser> userManager, RoleManager<ApplicationRole> roleManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService)
         {
             _userManager = userManager;
             _userInfo = new UserInfo(serviceScopeFactory);
@@ -37,6 +38,7 @@ namespace IdentityServer.Services.User
             _identityRepository = identityRepository;
             _customRepository = customRepository;
             _userChangeLogService = userChangeLogService;
+            _roleManager = roleManager;
         }
 
         public async Task<ApiResponse<string>> CreateUserAsync(ApplicationUserRequestDto userRequestDto)
@@ -60,33 +62,122 @@ namespace IdentityServer.Services.User
                     return ApiResponse<string>.Fail(errorMessage);
                 }
                 
-                userRequestDto.Id = Ulid.NewUlid().ToString();
-                userRequestDto.UserName = userRequestDto.Email;
-                userRequestDto.IsActive = true;
-                var map = _mapper.Map<ApplicationUserRequestDto, ApplicationUser>(userRequestDto);
-                var addUserResult = await _userManager.CreateAsync(map, userRequestDto.Password);
+                
+                var userMap = _mapper.Map<ApplicationUserRequestDto, ApplicationUser>(userRequestDto);
+                
+                userMap.Id = Ulid.NewUlid().ToString();
+                userMap.UserName = userRequestDto.Email;
+                userMap.IsActive = true;
+                userMap.CreatedDate = DateTime.UtcNow;
+                userMap.CreatedBy = _userInfo.UserId ?? "System";
+                
+                var addUserResult = await _userManager.CreateAsync(userMap, userRequestDto.Password);
                 if (addUserResult.Succeeded)
                 {
                     var claims = new List<Claim>();
-                    var tenantClaim = new Claim("tenant_id", map.TenantId.ToString());
-                    var userTypeClaim = new Claim("user_type", map.UserType.ToString());
+                    var tenantClaim = new Claim("tenant_id", userMap.TenantId.ToString());
+                    var userTypeClaim = new Claim("user_type", userMap.UserType.ToString());
 
                     claims.Add(tenantClaim);
                     claims.Add(userTypeClaim);
 
-                    var claimresult = await _userManager.AddClaimsAsync(map, claims);
+                    var claimresult = await _userManager.AddClaimsAsync(userMap, claims);
 
                     if (!claimresult.Succeeded)
                     {
                         return ApiResponse<string>.Fail(claimresult.Errors?.First().Description);
                     }
+
+                    // Kullanıcıya role atama
+                    var addToRoleResult = await _userManager.AddToRoleAsync(userMap, nameof(Roles.Customer));
+                    if (!addToRoleResult.Succeeded)
+                    {
+                        return ApiResponse<string>.Fail(addToRoleResult.Errors?.First().Description);
+                    }
+                    
                 }
                 else
                 {
                     return ApiResponse<string>.Fail(addUserResult.Errors?.First().Description);
                 }
                 
-                return ApiResponse<string>.Success(map.Id);
+                return ApiResponse<string>.Success(userMap.Id);
+            }
+            catch (Exception ex)
+            {
+                return ApiResponse<string>.Fail(ex.Message);
+            }
+        }
+        
+        public async Task<ApiResponse<string>> CreateUserByB2bAsync(ApplicationUserRequestDto userRequestDto, string roleName)
+        {
+            var response = new ApiResponse<string>();
+            try
+            {
+                var getUserByEmail = await _userManager.FindByEmailAsync(userRequestDto.Email);
+                if (getUserByEmail != null)
+                {
+                    var errorMessage = "Bu email ile daha önce kayıt yapılmış!";
+                    return ApiResponse<string>.Fail(errorMessage);
+                }
+
+                var getUserPhone = await _userManager.Users
+                    .FirstOrDefaultAsync(u => u.PhoneNumber == userRequestDto.PhoneNumber);
+
+                if (getUserPhone != null)
+                {
+                    var errorMessage = "Bu telefon numarası ile daha önce kayıt yapılmış!";
+                    return ApiResponse<string>.Fail(errorMessage);
+                }
+                
+                
+                var userMap = _mapper.Map<ApplicationUserRequestDto, ApplicationUser>(userRequestDto);
+                
+                userMap.Id = Ulid.NewUlid().ToString();
+                userMap.UserName = userRequestDto.Email;
+                userMap.IsActive = userRequestDto.IsActive;
+                userMap.CreatedDate = DateTime.UtcNow;
+                userMap.CreatedBy = _userInfo.UserId ?? "System";
+                
+                var addUserResult = await _userManager.CreateAsync(userMap, userRequestDto.Password);
+                if (addUserResult.Succeeded)
+                {
+                    var claims = new List<Claim>();
+                    var tenantClaim = new Claim("tenant_id", userMap.TenantId.ToString());
+                    var userTypeClaim = new Claim("user_type", userMap.UserType.ToString());
+
+                    claims.Add(tenantClaim);
+                    claims.Add(userTypeClaim);
+
+                    var claimresult = await _userManager.AddClaimsAsync(userMap, claims);
+
+                    if (!claimresult.Succeeded)
+                    {
+                        return ApiResponse<string>.Fail(claimresult.Errors?.First().Description);
+                    }
+                    
+                    roleName = !string.IsNullOrEmpty(roleName) ? roleName : nameof(Roles.Supplier);
+
+                    // Rol kontrolü
+                    if (!await _roleManager.RoleExistsAsync(roleName))
+                    {
+                        return ApiResponse<string>.Fail("Rol bulunamadı!");
+                    }
+
+                    // Kullanıcıya role atama
+                    var addToRoleResult = await _userManager.AddToRoleAsync(userMap, roleName);
+                    if (!addToRoleResult.Succeeded)
+                    {
+                        return ApiResponse<string>.Fail(addToRoleResult.Errors?.First().Description);
+                    }
+                    
+                }
+                else
+                {
+                    return ApiResponse<string>.Fail(addUserResult.Errors?.First().Description);
+                }
+                
+                return ApiResponse<string>.Success(userMap.Id);
             }
             catch (Exception ex)
             {
@@ -149,10 +240,7 @@ namespace IdentityServer.Services.User
             var response = new ApiResponse<List<UserResponseDto>>();
             try
             {
-                var users = await _userManager.Users.Where(x => x.TenantId == _userInfo.TenantId).ToListAsync();
-
-                response.Data = _mapper.Map<List<ApplicationUser>, List<UserResponseDto>>(users);
-
+                response.Data = await _identityRepository.GetUsersAsync();;
             }
             catch (Exception ex)
             {

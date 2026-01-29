@@ -26,13 +26,11 @@ public class CustomProfileService : IProfileService
             // no subject/user -> no claims
             return;
         }
-
-        // helper: add claim only if it's requested and has a non-empty value
-        void AddIfRequested(string type, string? value)
+        
+        var userRole = await _userManager.GetRolesAsync(user);
+        if (userRole != null && userRole.Any())
         {
-            if (!context.RequestedClaimTypes.Contains(type)) return;
-            if (string.IsNullOrWhiteSpace(value)) return;
-            context.IssuedClaims.Add(new Claim(type, value));
+            context.IssuedClaims.AddRange(userRole.Select(role => new Claim("role", role)));
         }
 
         // populate claims safely
@@ -45,6 +43,15 @@ public class CustomProfileService : IProfileService
         AddIfRequested("user_type", user.UserType.ToString());
         AddIfRequested("tenant_id", user.TenantId.ToString());
         AddIfRequested("email_confirmed", user.EmailConfirmed.ToString());
+        return;
+
+        // helper: add claim only if it's requested and has a non-empty value
+        void AddIfRequested(string type, string? value)
+        {
+            if (!context.RequestedClaimTypes.Contains(type)) return;
+            if (string.IsNullOrWhiteSpace(value)) return;
+            context.IssuedClaims.Add(new Claim(type, value));
+        }
     }
 
     public async Task IsActiveAsync(IsActiveContext context)

@@ -74,9 +74,9 @@ namespace IdentityServer.Controllers
             var result = await _roleService.GetRolesAsync();
 
             if (result.HasError)
-                return BadRequest(result.Errors);
+                return BadRequest(result);
 
-            return Ok(result.Data);
+            return Ok(result);
         }
 
         [HttpGet("GetRoleClaimsById")]

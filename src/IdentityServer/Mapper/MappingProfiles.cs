@@ -16,7 +16,11 @@ namespace IdentityServer.Mapper
 			CreateMap<Claim, RoleClaimResponseDto>().ReverseMap();
 			CreateMap<RoleClaimTypesResponseDto, ViewType>().ReverseMap();
             CreateMap<RoleClaimValuesResponseDto, View>().ReverseMap();
-			CreateMap<UserResponseDto, ApplicationUser>().ReverseMap();
+            CreateMap<ApplicationUser, UserResponseDto>()
+	            .ForMember(dest => dest.FullName, opt => opt.MapFrom(src => $"{src.FirstName} {src.LastName}".Trim()))
+	            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.IsActive))
+	            .ReverseMap();
+            
             CreateMap<ApplicationUserRequestDto, ApplicationUser>().ReverseMap();
 			CreateMap<ApplicationUserUpdateRequestDto, ApplicationUser>().PreserveReferences();
 			CreateMap<UserChangeLog, UserChangeLogResponseDto>().ReverseMap();

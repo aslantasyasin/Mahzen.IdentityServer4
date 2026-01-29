@@ -35,6 +35,45 @@ namespace IdentityServer.Repositories.Identity
                           where ur.UserId == userId
                           select rc).ToListAsync();
         }
+        
+        public async Task<List<UserResponseDto>> GetUsersAsync()
+        {
+            var users = await (from u in _applicationDbContext.Users
+                    join ur in _applicationDbContext.UserRoles on u.Id equals ur.UserId into userRoles
+                    from ur in userRoles.DefaultIfEmpty()
+                    join r in _applicationDbContext.Roles on ur.RoleId equals r.Id into roles
+                    from r in roles.DefaultIfEmpty()
+                    group new { u, r } by new 
+                    { 
+                        u.Id, 
+                        u.UserName, 
+                        u.FirstName, 
+                        u.LastName, 
+                        u.Email, 
+                        u.PhoneNumber, 
+                        u.CreatedDate, 
+                        u.IsActive, 
+                    } into g
+                    select new UserResponseDto
+                    {
+                        Id = g.Key.Id,
+                        UserName = g.Key.UserName,
+                        FirstName = g.Key.FirstName,
+                        LastName = g.Key.LastName,
+                        FullName =g.Key.FirstName + " " + g.Key.LastName,
+                        Email = g.Key.Email,
+                        PhoneNumber = g.Key.PhoneNumber,
+                        CreatedDate = g.Key.CreatedDate,
+                        Status = g.Key.IsActive,
+                        Role = g.Select(x => x.r.Name)
+                            .OrderBy(name => name)
+                            .FirstOrDefault()
+                    })
+                .AsNoTracking()
+                .ToListAsync();
+            
+            return users;
+        }
     }
 }
 
