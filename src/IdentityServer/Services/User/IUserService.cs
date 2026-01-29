@@ -26,5 +26,6 @@ namespace IdentityServer.Services.User
         Task<ApiResponse<bool>> UpdateEmailAsync(UpdateEmailRequestDto model);
         Task<ApiResponse<bool>> UpdateProfileInfoAsync(UpdateProfileInfoRequestDto model);
         Task<ApiResponse<List<UserChangeLogResponseDto>>> GetUserChangeLogsAsync(string userId);
+        Task<ApiResponse<string>> CreateUserByB2bAsync(ApplicationUserRequestDto userRequestDto, string roleName);
 	}
 }

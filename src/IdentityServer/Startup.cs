@@ -170,6 +170,29 @@ namespace IdentityServer
                         }
                     };
                 });
+            
+            services.AddAuthorization(options =>
+            {
+                options.AddPolicy("RequireB2BClient", policy =>
+                {
+                    policy.RequireAssertion(context =>
+                    {
+                        var clientId = context.User.FindFirst("client_id")?.Value
+                                       ?? context.User.FindFirst("azp")?.Value;
+                        return !string.IsNullOrEmpty(clientId) && clientId == "B2B";
+                    });
+                });
+                
+                options.AddPolicy("RequireAdminRole", policy =>
+                {
+                    policy.RequireAssertion(ctx =>
+                    {
+                        var role = ctx.User.FindFirst("role")?.Value;
+                        return string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase);
+                    });
+                });
+                
+            });
         }
 
         public void Configure(IApplicationBuilder app)

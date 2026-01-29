@@ -1,4 +1,5 @@
-﻿using IdentityServer.Models.Base;
+﻿using System;
+using IdentityServer.Models.Base;
 using IdentityServer.Models.Enums;
 using Microsoft.AspNetCore.Identity;
 
@@ -13,6 +14,9 @@ namespace IdentityServer.Models
         public UserType UserType { get; set; }
         public int TenantId { get; set; }
         public string CountryCode { get; set; }
+        public DateTime CreatedDate { get; set; }
+        public DateTime? UpdatedDate { get; set; }
+        public string CreatedBy { get; set; }
         
     }
 }

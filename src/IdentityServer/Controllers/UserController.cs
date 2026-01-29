@@ -20,67 +20,17 @@ namespace IdentityServer.Controllers
         {
             _userService = userService;
         }
-        
-        [HttpPost]
-        public async Task<IActionResult> SignUp()
-        {
-            var client = new HttpClient();
-
-            var disco = await client.GetDiscoveryDocumentAsync("https://localhost:5001");
-
-            var password = new PasswordTokenRequest
-            {
-                Address = disco.TokenEndpoint,
-                UserName = "fcakiroglu@outlook.com",
-                Password = "password",
-                ClientId = "client2"
-            };
-
-            var token = await client.RequestPasswordTokenAsync(password);
-
-            // Dönen token'ı debug veya frontend'e göstermek için dönüyoruz. Üretimde AccessToken'ı doğrudan döndürme.
-            return Ok(token);
-        }
-
-        //[HttpPost]
-        //public async Task<IActionResult> Register([FromBody]ApplicationUserRequestDto appUser)
-        //{
-        //    try
-        //    {
-        //        if (!ModelState.IsValid)
-        //        {
-        //            return BadRequest(ModelState);
-        //        }
-        //        var registerResult = await _userService.UserRegister(appUser);
-
-        //        return Ok(registerResult);
-        //    }
-        //    catch (System.Exception ex)
-        //    {
-
-        //    }
-
-
-        //    return Ok("Register up çalıştı");
-        //}
-
-        //[HttpGet]
-        //public async Task<IActionResult> GetUserInfo()
-        //{
-
-        // var res = await _userManager.get
-        //return Ok("Register up çalıştı");
-        //}
 
         [HttpGet("GetUsers")]
+        [Authorize(Policy = "RequireB2BClient")]
         public async Task<IActionResult> GetUsers()
         {
             var result = await _userService.GetUsersAsync();
 
             if (result.HasError)
-                return BadRequest(result.Errors);
+                return BadRequest(result);
 
-            return Ok(result.Data);
+            return Ok(result);
         }
         
         [HttpGet("Get/{id}")]
@@ -102,6 +52,18 @@ namespace IdentityServer.Controllers
             // Eğer özel bir hata formatı istiyorsanız Program.cs içinde ApiBehaviorOptions.SuppressModelStateInvalidFilter = true yapıp burada ModelState'i kontrol edebilirsiniz.
             
             var result = await _userService.CreateUserAsync(userRequestDto);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
+        
+        [HttpPost("B2bRegister")]
+        [Authorize(Policy = "RequireAdminRole")]
+        public async Task<IActionResult> B2bRegister([FromBody] ApplicationUserRequestDto userRequestDto, string roleName)
+        {
+            var result = await _userService.CreateUserByB2bAsync(userRequestDto, roleName);
 
             if (result.HasError)
                 return BadRequest(result);
