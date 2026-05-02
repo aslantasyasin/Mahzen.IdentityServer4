@@ -10,6 +10,7 @@ namespace IdentityServer.Models.Custom.Base
 		[Required]
 		public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
 		public DateTime UpdateDate { get; set; }
+		public bool IsActive { get; set; }
 	}
 }
 
