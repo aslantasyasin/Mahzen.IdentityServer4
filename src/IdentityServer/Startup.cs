@@ -64,7 +64,7 @@ namespace IdentityServer
             services.AddScoped<IIdentityRepository, IdentityRepository>();
             services.AddScoped<IHybridRepository, HybridRepository>();
             services.AddScoped<IUserChangeLogService, UserChangeLogService>();
-    
+
             ///automapper
 
             services.AddAutoMapper(typeof(Startup));
@@ -99,7 +99,12 @@ namespace IdentityServer
             var connectionString = Configuration.GetConnectionString("DefaultConnection");
             var migrationsAssembly = typeof(Startup).Assembly.GetName().Name;
 
-            var builder = services.AddIdentityServer()
+            var issuerUri = Configuration
+                .GetSection("IdentityServer")
+                .GetValue<string>("IssuerUri");
+
+
+            var builder = services.AddIdentityServer(options => { options.IssuerUri = issuerUri; })
                 .AddConfigurationStore(options =>
                 {
                     options.DefaultSchema = "ids4";
@@ -136,15 +141,13 @@ namespace IdentityServer
             services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 .AddJwtBearer(options =>
                 {
-                    var identityAuth = Configuration.GetSection("ExternalServices").GetSection("IDS4Service")
-                        .GetValue<string>("BaseUrl");
-                    options.Authority = identityAuth;
+                    options.Authority = issuerUri;
                     options.Audience = "auth-api";
-                    options.TokenValidationParameters.ValidIssuer = identityAuth;
+                    options.TokenValidationParameters.ValidIssuer = issuerUri;
                     options.TokenValidationParameters.ValidateAudience = true;
                     options.TokenValidationParameters.ValidateIssuer = true;
                     options.TokenValidationParameters.ValidateLifetime = true;
-                    
+
                     options.Events = new JwtBearerEvents()
                     {
                         OnAuthenticationFailed = c =>
@@ -170,7 +173,7 @@ namespace IdentityServer
                         }
                     };
                 });
-            
+
             services.AddAuthorization(options =>
             {
                 options.AddPolicy("RequireB2BClient", policy =>
@@ -182,7 +185,7 @@ namespace IdentityServer
                         return !string.IsNullOrEmpty(clientId) && clientId == "B2B";
                     });
                 });
-                
+
                 options.AddPolicy("RequireAdminRole", policy =>
                 {
                     policy.RequireAssertion(ctx =>
@@ -191,7 +194,6 @@ namespace IdentityServer
                         return string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase);
                     });
                 });
-                
             });
         }
 
