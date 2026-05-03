@@ -31,6 +31,7 @@ using System.Threading.Tasks;
 using IdentityServer.Validators;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NuGet.Commands;
 using Serilog;
@@ -199,6 +200,20 @@ namespace IdentityServer
 
         public void Configure(IApplicationBuilder app)
         {
+            // Reverse proxy (k8s ingress / nginx) X-Forwarded-Proto header'ını okuyarak
+            // IDS4'ün gerçek scheme'i (https) algılamasını sağlar. Discovery document'taki
+            // jwks_uri / token_endpoint gibi URL'lerin doğru scheme ile üretilmesi için şart.
+            // KnownNetworks/KnownProxies boş = tüm proxy'lere güven (cluster-internal kullanım).
+            var forwardedOptions = new ForwardedHeadersOptions
+            {
+                ForwardedHeaders = ForwardedHeaders.XForwardedFor
+                                 | ForwardedHeaders.XForwardedProto
+                                 | ForwardedHeaders.XForwardedHost
+            };
+            forwardedOptions.KnownNetworks.Clear();
+            forwardedOptions.KnownProxies.Clear();
+            app.UseForwardedHeaders(forwardedOptions);
+
             if (Environment.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
