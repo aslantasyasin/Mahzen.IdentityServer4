@@ -1,4 +1,5 @@
 ﻿using IdentityModel.Client;
+using IdentityServer.Helper;
 using IdentityServer.Models.Dto.User;
 using IdentityServer.Services.User;
 using Microsoft.AspNetCore.Mvc;
@@ -46,6 +47,7 @@ namespace IdentityServer.Controllers
 
         [HttpPost("Register")]
         [AllowAnonymous]
+        [InternalCallerOnly]
         public async Task<IActionResult> Register([FromBody] ApplicationUserRequestDto userRequestDto)
         {
             // Not: Controller'da [ApiController] varsa framework otomatik olarak model doğrulama hatalarında 400 döndürür.
@@ -73,6 +75,7 @@ namespace IdentityServer.Controllers
         
         [HttpPost("EmailVerified")]
         [AllowAnonymous]
+        [InternalCallerOnly]
         public async Task<IActionResult> EmailVerified([FromBody]  string userId)
         {
             var result = await _userService.EmailVerified(userId);
@@ -138,6 +141,7 @@ namespace IdentityServer.Controllers
         
         [HttpGet("GetEmail/{userId}")]
         [AllowAnonymous]
+        [InternalCallerOnly]
         public async Task<IActionResult> GetEmailByUserId(string userId)
         {
             var result = await _userService.GetContactInfoByUserId(userId);

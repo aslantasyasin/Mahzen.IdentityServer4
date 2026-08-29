@@ -69,9 +69,10 @@ namespace IdentityServer.Services.User
         // IP ve User-Agent, BFF tarafından sunucu tarafında set edilen header'larla gelir
         // (mahzen.ui/src/app/api/auth/register/route.js). Doğrudan RemoteIpAddress okunmaz:
         // istek gateway üzerinden geldiği için orada gateway'in IP'si görünür.
-        // BİLİNEN SINIR: Register endpoint'i AllowAnonymous ve gateway üzerinden dışarı açık;
-        // doğrudan IDS4'e istek atan biri bu header'ı uydurabilir. Gateway'de istemciden
-        // gelen X-Client-* header'larının strip edilmesi ayrı bir iş kalemidir.
+        // Header'a güvenilebilmesi [InternalCallerOnly] filtresine dayanır: Register ucu
+        // yalnızca paylaşımlı anahtarı bilen çağırana (BFF) açıktır, dolayısıyla buraya
+        // ulaşan X-Client-* değerlerini BFF koymuştur. Anahtar yapılandırılmamışsa filtre
+        // fail-open davranır ve bu güven ortadan kalkar — Warning log'u bunun içindir.
         private string ReadHeader(string name)
         {
             var values = _httpContextAccessor.HttpContext?.Request?.Headers[name] ?? StringValues.Empty;
