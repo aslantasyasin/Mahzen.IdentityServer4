@@ -65,6 +65,7 @@ namespace IdentityServer
             services.AddScoped<IIdentityRepository, IdentityRepository>();
             services.AddScoped<IHybridRepository, HybridRepository>();
             services.AddScoped<IUserChangeLogService, UserChangeLogService>();
+            services.AddScoped<IUserConsentService, UserConsentService>();
 
             ///automapper
 

@@ -1,4 +1,5 @@
 ﻿using IdentityServer.Models.Enums;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 
 namespace IdentityServer.Models.Dto.User
@@ -32,5 +33,10 @@ namespace IdentityServer.Models.Dto.User
         [Required(ErrorMessage = "Phone number is required.")]
         [RegularExpression("^[1-9][0-9]{9}$", ErrorMessage = "Phone number must be exactly 10 digits and cannot start with 0.")]
         public string PhoneNumber { get; set; }
+
+        // Kabul edilen hukuki dokümanlar. [Required] konmadı: aynı DTO B2bRegister
+        // tarafından da kullanılıyor, orada onay kullanıcıdan alınmıyor. Zorunluluk
+        // yalnızca B2C yolunda (UserService.CreateUserAsync) uygulanır.
+        public List<ConsentAcceptanceDto> AcceptedDocuments { get; set; } = new List<ConsentAcceptanceDto>();
     }
 }

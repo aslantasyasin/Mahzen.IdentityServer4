@@ -14,6 +14,7 @@ namespace IdentityServer.Data
         public DbSet<View> View { get; set; }
         public DbSet<ViewType> ViewType { get; set; }
         public DbSet<UserChangeLog> UserChangeLogs { get; set; }
+        public DbSet<UserConsent> UserConsent { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -46,6 +47,24 @@ namespace IdentityServer.Data
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.UserId).IsRequired();
                 // FK yok - sadece string olarak UserId tutuyoruz
+            });
+
+            // UserConsent de aynı sebeple FK'sız: Identity tabloları ApplicationDbContext'te.
+            modelBuilder.Entity<UserConsent>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.UserId).IsRequired().HasMaxLength(64);
+                // Enum metin olarak saklanır: tablo hukuki bir denetim kaydı, doğrudan
+                // SQL ile okunduğunda "1/2" değil "TermsOfUse/PrivacyPolicy" görünmeli.
+                entity.Property(e => e.DocumentType).IsRequired().HasMaxLength(64).HasConversion<string>();
+                entity.Property(e => e.DocumentVersion).IsRequired().HasMaxLength(32);
+                entity.Property(e => e.ContentHash).IsRequired().HasMaxLength(64);
+                entity.Property(e => e.Source).IsRequired().HasMaxLength(32);
+                entity.Property(e => e.IpAddress).HasMaxLength(45);
+                entity.Property(e => e.UserAgent).HasMaxLength(512);
+                // "Bu kiracıdaki bu kullanıcının bu doküman için en son onayı" sorgusu.
+                entity.HasIndex(e => new { e.TenantId, e.UserId, e.DocumentType, e.AcceptedAt })
+                      .HasDatabaseName("IX_UserConsent_Tenant_User_Document");
             });
             
             base.OnModelCreating(modelBuilder);

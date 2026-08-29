@@ -16,6 +16,7 @@ using IdentityServer.Repositories.Identity;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NUlid;
 
 namespace IdentityServer.Services.User
@@ -29,8 +30,18 @@ namespace IdentityServer.Services.User
         private readonly IIdentityRepository _identityRepository;
         private readonly ICustomRepository _customRepository;
         private readonly IUserChangeLogService _userChangeLogService;
+        private readonly IUserConsentService _userConsentService;
+        private readonly ILogger<UserService> _logger;
 
-        public UserService(UserManager<ApplicationUser> userManager, RoleManager<ApplicationRole> roleManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService)
+        // B2C kaydında alınması zorunlu onaylar. Tek otorite burasıdır; yeni bir
+        // zorunlu doküman eklenirse yalnızca bu dizi güncellenir.
+        private static readonly ConsentDocumentType[] RequiredRegistrationConsents =
+        {
+            ConsentDocumentType.TermsOfUse,
+            ConsentDocumentType.PrivacyPolicy
+        };
+
+        public UserService(UserManager<ApplicationUser> userManager, RoleManager<ApplicationRole> roleManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService, IUserConsentService userConsentService, ILogger<UserService> logger)
         {
             _userManager = userManager;
             _userInfo = new UserInfo(serviceScopeFactory);
@@ -38,7 +49,36 @@ namespace IdentityServer.Services.User
             _identityRepository = identityRepository;
             _customRepository = customRepository;
             _userChangeLogService = userChangeLogService;
+            _userConsentService = userConsentService;
+            _logger = logger;
             _roleManager = roleManager;
+        }
+
+        // Onay listesini kullanıcı OLUŞTURULMADAN ÖNCE doğrular. NEDEN önce: eksik onay
+        // burada yakalanırsa hiçbir yan etki oluşmaz, telafi edici silme gerekmez.
+        // Hata varsa kullanıcıya gösterilecek mesajı, yoksa null döner.
+        private static string ValidateRegistrationConsents(List<ConsentAcceptanceDto> documents)
+        {
+            const string missingMessage = "Üyelik Sözleşmesi ve Gizlilik Politikası onayı zorunludur.";
+
+            if (documents == null || documents.Count == 0)
+                return missingMessage;
+
+            foreach (var required in RequiredRegistrationConsents)
+            {
+                var match = documents.FirstOrDefault(d =>
+                    Enum.TryParse<ConsentDocumentType>(d.DocumentType, out var parsed) && parsed == required);
+
+                if (match == null)
+                    return missingMessage;
+
+                // Sürüm ve içerik özeti olmayan onay kaydı ispat değeri taşımaz;
+                // eksik veriyle yazmaktansa kaydı reddetmek doğru.
+                if (string.IsNullOrWhiteSpace(match.Version) || string.IsNullOrWhiteSpace(match.ContentHash))
+                    return missingMessage;
+            }
+
+            return null;
         }
 
         public async Task<ApiResponse<string>> CreateUserAsync(ApplicationUserRequestDto userRequestDto)
@@ -46,6 +86,10 @@ namespace IdentityServer.Services.User
             var response = new ApiResponse<string>();
             try
             {
+                var consentError = ValidateRegistrationConsents(userRequestDto.AcceptedDocuments);
+                if (consentError != null)
+                    return ApiResponse<string>.Fail(consentError);
+
                 var getUserByEmail = await _userManager.FindByEmailAsync(userRequestDto.Email);
                 if (getUserByEmail != null)
                 {
@@ -94,7 +138,40 @@ namespace IdentityServer.Services.User
                     {
                         return ApiResponse<string>.Fail(addToRoleResult.Errors?.First().Description);
                     }
-                    
+
+                    // Onay kaydı. TenantId parametre olarak geçiliyor: kayıt endpoint'i
+                    // AllowAnonymous, Authorization header yok, bu yüzden _userInfo.TenantId
+                    // burada 0 döner. Doğru değer yeni oluşturulan kullanıcının kendisindedir.
+                    try
+                    {
+                        await _userConsentService.RecordAsync(
+                            userMap.Id,
+                            userMap.TenantId,
+                            userRequestDto.AcceptedDocuments,
+                            UserConsent.SourceRegister);
+                    }
+                    catch (Exception consentEx)
+                    {
+                        // Telafi edici geri alma: CustomDbContext ile Identity aynı
+                        // transaction'da değil. Onay kaydı yazılamadıysa ispatı olmayan bir
+                        // kullanıcı geride kalmamalı — kullanıcı saniyeler önce yaratıldı,
+                        // siparişi/ilişkisi yok, silmek güvenli.
+                        _logger.LogError(consentEx,
+                            "UserConsent yazılamadı, kayıt geri alınıyor. UserId={UserId} Email={Email} TenantId={TenantId}",
+                            userMap.Id, userMap.Email, userMap.TenantId);
+
+                        var rollbackResult = await _userManager.DeleteAsync(userMap);
+                        if (!rollbackResult.Succeeded)
+                        {
+                            // Elle müdahale gerekir: onaysız kullanıcı DB'de kaldı.
+                            _logger.LogError(
+                                "UserConsent geri alması BASARISIZ. Onaysız kullanıcı silinemedi, elle silinmeli. UserId={UserId} Email={Email} Hata={Errors}",
+                                userMap.Id, userMap.Email,
+                                string.Join(" | ", rollbackResult.Errors.Select(e => e.Description)));
+                        }
+
+                        return ApiResponse<string>.Fail("Kayıt tamamlanamadı, lütfen tekrar deneyin.");
+                    }
                 }
                 else
                 {
