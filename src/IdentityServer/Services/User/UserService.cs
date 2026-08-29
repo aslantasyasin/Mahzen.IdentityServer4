@@ -59,6 +59,12 @@ namespace IdentityServer.Services.User
         // SHA-256 hex özeti uzunluğu. Onay kaydındaki ContentHash bu biçimde olmalı.
         private const int ContentHashLength = 64;
 
+        // Beklenmeyen hatalarda istemciye dönen genel mesaj. NEDEN ex.Message dönülmüyor:
+        // bu metotları çağıran uçlar [AllowAnonymous] ve gateway üzerinden dışarı açık;
+        // Postgres/Identity hata metinleri şema, kolon ve altyapı bilgisi sızdırır (md. 9).
+        // Ayrıntı log'a yazılır, istemciye gitmez.
+        private const string UnexpectedErrorMessage = "İşlem tamamlanamadı, lütfen tekrar deneyin.";
+
         // Kabul edilebilir onay dizisi üst sınırı. Zorunlu doküman sayısı bugün 2;
         // sınır, ileride doküman eklenirse kodu değiştirmeye gerek kalmasın diye
         // biraz yüksek tutuldu. NEDEN gerekli: gövde deserialize edildikten sonra
@@ -223,7 +229,11 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                return ApiResponse<string>.Fail(ex.Message);
+                // Yutulan hata mutlaka loglanır (md. 13): istemciye genel mesaj döndüğü
+                // için tek iz burasıdır. E-posta PII olduğu için loglanmıyor.
+                _logger.LogError(ex, "Kullanıcı kaydı beklenmeyen hata ile başarısız oldu. TenantId={TenantId}",
+                    userRequestDto?.TenantId);
+                return ApiResponse<string>.Fail(UnexpectedErrorMessage);
             }
         }
         
@@ -330,7 +340,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "E-posta doğrulama beklenmeyen hata ile başarısız oldu. UserId={UserId}", userId);
+                response.Errors.Add(UnexpectedErrorMessage);
             }
             return response;
         }
@@ -608,7 +619,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "İletişim bilgisi okunurken beklenmeyen hata oluştu. UserId={UserId}", userId);
+                response.Errors.Add(UnexpectedErrorMessage);
             }
             
             return response;
