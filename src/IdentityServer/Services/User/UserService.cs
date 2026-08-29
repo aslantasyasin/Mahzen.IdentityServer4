@@ -54,31 +54,70 @@ namespace IdentityServer.Services.User
             _roleManager = roleManager;
         }
 
-        // Onay listesini kullanıcı OLUŞTURULMADAN ÖNCE doğrular. NEDEN önce: eksik onay
-        // burada yakalanırsa hiçbir yan etki oluşmaz, telafi edici silme gerekmez.
-        // Hata varsa kullanıcıya gösterilecek mesajı, yoksa null döner.
-        private static string ValidateRegistrationConsents(List<ConsentAcceptanceDto> documents)
-        {
-            const string missingMessage = "Üyelik Sözleşmesi ve Gizlilik Politikası onayı zorunludur.";
+        public const string ConsentRequiredMessage = "Üyelik Sözleşmesi ve Gizlilik Politikası onayı zorunludur.";
 
-            if (documents == null || documents.Count == 0)
-                return missingMessage;
+        // SHA-256 hex özeti uzunluğu. Onay kaydındaki ContentHash bu biçimde olmalı.
+        private const int ContentHashLength = 64;
+
+        // Kabul edilebilir onay dizisi üst sınırı. Zorunlu doküman sayısı bugün 2;
+        // sınır, ileride doküman eklenirse kodu değiştirmeye gerek kalmasın diye
+        // biraz yüksek tutuldu. NEDEN gerekli: gövde deserialize edildikten sonra
+        // dizi üzerinde tarama yapılıyor ve Kestrel'in gövde boyutu sınırı (30MB)
+        // yüz binlerce elemana izin verir; sınır, taramayı en baştan kesiyor.
+        private const int MaxAcceptedDocuments = 10;
+
+        // Yazılacak onay listesini kullanıcı OLUŞTURULMADAN ÖNCE kurar; geçersizse null döner.
+        // NEDEN önce: eksik onay burada yakalanırsa hiçbir yan etki oluşmaz, telafi gerekmez.
+        //
+        // NEDEN gelen liste olduğu gibi kullanılmıyor da ZORUNLU liste üzerinden yeniden
+        // kuruluyor: Register ucu AllowAnonymous ve gateway üzerinden dışarı açık. Gelen
+        // diziyi olduğu gibi yazmak, kimliksiz bir çağıranın tek istekte on binlerce satır
+        // ekletmesine izin verirdi (md. 5 — girdi kümesi sınırsız büyüyemez). Bu kurguda
+        // girdi kaç eleman içerirse içersin en fazla RequiredRegistrationConsents.Length
+        // satır yazılır ve tekrar eden türler kendiliğinden elenir.
+        private static List<ConsentAcceptanceDto> ResolveRegistrationConsents(List<ConsentAcceptanceDto> documents)
+        {
+            if (documents == null || documents.Count == 0 || documents.Count > MaxAcceptedDocuments)
+                return null;
+
+            var resolved = new List<ConsentAcceptanceDto>(RequiredRegistrationConsents.Length);
 
             foreach (var required in RequiredRegistrationConsents)
             {
+                // NEDEN Enum.TryParse ile değil metin karşılaştırmasıyla: TryParse tanımsız
+                // sayısal değerleri de başarıyla ayrıştırır — "999" true döner ve enum'a
+                // aralık dışı bir değer olarak yazılır. Beklenen adın birebir eşleşmesi
+                // aranarak bu yol kapatılıyor.
+                var requiredName = required.ToString();
                 var match = documents.FirstOrDefault(d =>
-                    Enum.TryParse<ConsentDocumentType>(d.DocumentType, out var parsed) && parsed == required);
+                    string.Equals(d?.DocumentType, requiredName, StringComparison.Ordinal));
 
                 if (match == null)
-                    return missingMessage;
+                    return null;
 
                 // Sürüm ve içerik özeti olmayan onay kaydı ispat değeri taşımaz;
-                // eksik veriyle yazmaktansa kaydı reddetmek doğru.
-                if (string.IsNullOrWhiteSpace(match.Version) || string.IsNullOrWhiteSpace(match.ContentHash))
-                    return missingMessage;
+                // eksik/bozuk veriyle yazmaktansa kaydı reddetmek doğru.
+                if (string.IsNullOrWhiteSpace(match.Version) || !IsSha256Hex(match.ContentHash))
+                    return null;
+
+                resolved.Add(match);
             }
 
-            return null;
+            return resolved;
+        }
+
+        private static bool IsSha256Hex(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length != ContentHashLength)
+                return false;
+
+            foreach (var c in value)
+            {
+                var isHex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                if (!isHex) return false;
+            }
+
+            return true;
         }
 
         public async Task<ApiResponse<string>> CreateUserAsync(ApplicationUserRequestDto userRequestDto)
@@ -86,9 +125,9 @@ namespace IdentityServer.Services.User
             var response = new ApiResponse<string>();
             try
             {
-                var consentError = ValidateRegistrationConsents(userRequestDto.AcceptedDocuments);
-                if (consentError != null)
-                    return ApiResponse<string>.Fail(consentError);
+                var consentsToRecord = ResolveRegistrationConsents(userRequestDto.AcceptedDocuments);
+                if (consentsToRecord == null)
+                    return ApiResponse<string>.Fail(ConsentRequiredMessage);
 
                 var getUserByEmail = await _userManager.FindByEmailAsync(userRequestDto.Email);
                 if (getUserByEmail != null)
@@ -147,7 +186,7 @@ namespace IdentityServer.Services.User
                         await _userConsentService.RecordAsync(
                             userMap.Id,
                             userMap.TenantId,
-                            userRequestDto.AcceptedDocuments,
+                            consentsToRecord,
                             UserConsent.SourceRegister);
                     }
                     catch (Exception consentEx)
@@ -156,17 +195,19 @@ namespace IdentityServer.Services.User
                         // transaction'da değil. Onay kaydı yazılamadıysa ispatı olmayan bir
                         // kullanıcı geride kalmamalı — kullanıcı saniyeler önce yaratıldı,
                         // siparişi/ilişkisi yok, silmek güvenli.
+                        // Log'a e-posta YAZILMIYOR: PII, ve Serilog Graylog'a gönderiyor.
+                        // Elle onarım için UserId yeterli (md. 9 + md. 13).
                         _logger.LogError(consentEx,
-                            "UserConsent yazılamadı, kayıt geri alınıyor. UserId={UserId} Email={Email} TenantId={TenantId}",
-                            userMap.Id, userMap.Email, userMap.TenantId);
+                            "UserConsent yazılamadı, kayıt geri alınıyor. UserId={UserId} TenantId={TenantId}",
+                            userMap.Id, userMap.TenantId);
 
                         var rollbackResult = await _userManager.DeleteAsync(userMap);
                         if (!rollbackResult.Succeeded)
                         {
                             // Elle müdahale gerekir: onaysız kullanıcı DB'de kaldı.
                             _logger.LogError(
-                                "UserConsent geri alması BASARISIZ. Onaysız kullanıcı silinemedi, elle silinmeli. UserId={UserId} Email={Email} Hata={Errors}",
-                                userMap.Id, userMap.Email,
+                                "UserConsent geri alması BASARISIZ. Onaysız kullanıcı silinemedi, elle silinmeli. UserId={UserId} Hata={Errors}",
+                                userMap.Id,
                                 string.Join(" | ", rollbackResult.Errors.Select(e => e.Description)));
                         }
 
