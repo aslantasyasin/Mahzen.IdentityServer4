@@ -13,6 +13,7 @@ using IdentityServer.Models.Dto.User;
 using IdentityServer.Models.Enums;
 using IdentityServer.Repositories;
 using IdentityServer.Repositories.Identity;
+using IdentityServer4.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -32,6 +33,7 @@ namespace IdentityServer.Services.User
         private readonly IUserChangeLogService _userChangeLogService;
         private readonly IUserConsentService _userConsentService;
         private readonly ILogger<UserService> _logger;
+        private readonly IPersistedGrantService _persistedGrantService;
 
         // B2C kaydında alınması zorunlu onaylar. Tek otorite burasıdır; yeni bir
         // zorunlu doküman eklenirse yalnızca bu dizi güncellenir.
@@ -41,7 +43,7 @@ namespace IdentityServer.Services.User
             ConsentDocumentType.PrivacyPolicy
         };
 
-        public UserService(UserManager<ApplicationUser> userManager, RoleManager<ApplicationRole> roleManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService, IUserConsentService userConsentService, ILogger<UserService> logger)
+        public UserService(UserManager<ApplicationUser> userManager, RoleManager<ApplicationRole> roleManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService, IUserConsentService userConsentService, ILogger<UserService> logger, IPersistedGrantService persistedGrantService)
         {
             _userManager = userManager;
             _userInfo = new UserInfo(serviceScopeFactory);
@@ -52,6 +54,7 @@ namespace IdentityServer.Services.User
             _userConsentService = userConsentService;
             _logger = logger;
             _roleManager = roleManager;
+            _persistedGrantService = persistedGrantService;
         }
 
         public const string ConsentRequiredMessage = "Üyelik Sözleşmesi ve Gizlilik Politikası onayı zorunludur.";
@@ -600,6 +603,146 @@ namespace IdentityServer.Services.User
             return response;
         }
         
+        // Şifre sıfırlama isteğinin ilk adımı. Sonucu SON KULLANICIYA DÖNMEZ:
+        // yalnızca Notification okur ve "mail atılsın mı" kararını verir.
+        //
+        // EmailConfirmed BİLEREK kontrol edilmiyor. Bu sistemde e-posta onayı bir
+        // erişim kapısı değil: CustomResourceOwnerPasswordValidator girişte de ona
+        // bakmıyor, yani onaysız kullanıcı zaten giriş yapabiliyor. Sıfırlamayı
+        // girişten katı yapmak, şifresini unutan onaysız kullanıcıyı kalıcı olarak
+        // kilitlerdi ve karşılığında hiçbir güvenlik kazancı vermezdi — kodun o
+        // posta kutusuna gidip geri girilmesi, e-posta doğrulamanın kanıtladığı
+        // şeyin aynısını kanıtlıyor. (Onay bayrağı, sıfırlama tamamlandığında
+        // ResetPasswordByServiceAsync içinde zaten true'ya çekiliyor.)
+        public async Task<ApiResponse<PasswordResetLookupResponseDto>> LookupForPasswordResetAsync(string email)
+        {
+            try
+            {
+                // Trim yeterli: büyük/küçük harf normalizasyonunu ASP.NET Identity
+                // kendi NormalizedEmail'i üzerinden zaten yapıyor.
+                var normalizedEmail = (email ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(normalizedEmail))
+                {
+                    return ApiResponse<PasswordResetLookupResponseDto>.Fail("Email adresi zorunludur.");
+                }
+
+                var user = await _userManager.FindByEmailAsync(normalizedEmail);
+
+                if (user == null)
+                {
+                    // Operasyonun "neden mail gitmedi" sorusunu cevaplayabileceği tek yer
+                    // loglardır; istemciye dönen yanıt bilinçli olarak hiçbir ipucu taşımıyor.
+                    _logger.LogInformation(
+                        "PasswordResetLookup: kayıtlı kullanıcı yok. Email={Email}", normalizedEmail);
+                    return ApiResponse<PasswordResetLookupResponseDto>.Success(
+                        new PasswordResetLookupResponseDto { Status = PasswordResetLookupResponseDto.StatusNotFound });
+                }
+
+                if (!user.IsActive)
+                {
+                    _logger.LogInformation(
+                        "PasswordResetLookup: kullanıcı pasif, sıfırlama maili gönderilmeyecek. UserId={UserId}", user.Id);
+                    return ApiResponse<PasswordResetLookupResponseDto>.Success(
+                        new PasswordResetLookupResponseDto { Status = PasswordResetLookupResponseDto.StatusInactive });
+                }
+
+                _logger.LogInformation("PasswordResetLookup: uygun. UserId={UserId}", user.Id);
+                return ApiResponse<PasswordResetLookupResponseDto>.Success(new PasswordResetLookupResponseDto
+                {
+                    Status = PasswordResetLookupResponseDto.StatusOk,
+                    UserId = user.Id
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "PasswordResetLookup beklenmeyen hata ile başarısız oldu.");
+                return ApiResponse<PasswordResetLookupResponseDto>.Fail(UnexpectedErrorMessage);
+            }
+        }
+
+        // Mevcut şifreyi istemeden sıfırlar. Kimlik kanıtı bu katmanda DEĞİL,
+        // Notification'da üretiliyor (posta kutusuna giden kodun geri girilmesi).
+        // Bu yüzden ucu çağırabilen tek taraf kendi servislerimiz olmalı.
+        public async Task<ApiResponse<bool>> ResetPasswordByServiceAsync(string userId, string newPassword)
+        {
+            var response = new ApiResponse<bool>();
+            try
+            {
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
+                }
+
+                // Token hemen üretilip hemen kullanılıyor: kullanıcıya hiç gitmiyor.
+                // Kullanıcı tarafındaki tek-kullanımlık kanıt, Notification'ın
+                // doğruladığı e-posta kodu; buradaki token yalnızca Identity'nin
+                // kendi ResetPasswordAsync sözleşmesini karşılamak için var.
+                var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+                var result = await _userManager.ResetPasswordAsync(user, resetToken, newPassword);
+
+                if (!result.Succeeded)
+                {
+                    // Şifre politikası hataları (çok kısa, rakam yok vb.) burada çıkar ve
+                    // çağırana taşınmalı; kullanıcı neyi düzelteceğini bilmeli.
+                    foreach (var err in result.Errors)
+                        response.Errors.Add(err.Code);
+                    return response;
+                }
+
+                // Sıfırlama, kullanıcının o posta kutusuna erişimini kanıtladı — yani
+                // e-posta doğrulamanın kanıtladığı şeyin aynısını. Onaysız hesap
+                // burada kendiliğinden kapanıyor.
+                if (!user.EmailConfirmed)
+                {
+                    user.EmailConfirmed = true;
+                    var confirmResult = await _userManager.UpdateAsync(user);
+                    if (!confirmResult.Succeeded)
+                    {
+                        // Yutulan ama loglanan hata: şifre değişti, yalnızca onay bayrağı
+                        // yazılamadı. İsteği başarısız saymak kullanıcıya YANLIŞ sonuç
+                        // bildirmek olurdu (şifresi gerçekten değişti). Elle onarım için
+                        // gereken her şey logda (md. 13).
+                        _logger.LogError(
+                            "Şifre sıfırlandı fakat EmailConfirmed yazılamadı. UserId={UserId} Hatalar={Errors}",
+                            userId, string.Join(",", confirmResult.Errors.Select(e => e.Code)));
+                    }
+                }
+
+                // Canlı oturumlar düşmeli. ResetPasswordAsync security stamp'i yeniliyor,
+                // ama bu YETMEZ: IDS4'ün refresh token'ları PersistedGrants tablosunda
+                // yaşıyor ve ASP.NET Identity'nin security stamp'ine karşı doğrulanmıyor.
+                // Revoke edilmezse hesabı ele geçiren kişinin oturumu, kurban şifresini
+                // değiştirdikten sonra da çalışmaya devam ederdi — sıfırlamanın var olma
+                // sebebini boşa çıkarır.
+                try
+                {
+                    await _persistedGrantService.RemoveAllGrantsAsync(userId);
+                }
+                catch (Exception grantEx)
+                {
+                    // İstek başarısız SAYILMIYOR: şifre bu noktada gerçekten değişti ve
+                    // geri alınamaz. Kullanıcıya "olmadı" demek yanlış olur. Ama bu,
+                    // elle müdahale gerektiren bir durum: eski oturumlar hâlâ açık.
+                    _logger.LogError(grantEx,
+                        "Şifre sıfırlandı fakat oturumlar (persisted grants) iptal edilemedi. " +
+                        "Eski refresh token'lar hâlâ geçerli olabilir, elle iptal gerekir. UserId={UserId}",
+                        userId);
+                }
+
+                await _userChangeLogService.LogChangeAsync(userId, "PasswordReset", "***", "***", userId);
+                _logger.LogInformation("Şifre sıfırlandı. UserId={UserId}", userId);
+
+                response.Data = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Şifre sıfırlama beklenmeyen hata ile başarısız oldu. UserId={UserId}", userId);
+                response.Errors.Add(UnexpectedErrorMessage);
+            }
+            return response;
+        }
+
         public async Task<ApiResponse<UserContactResponseDto>> GetContactInfoByUserId(string userId)
         {
             var response = new ApiResponse<UserContactResponseDto>();

@@ -21,6 +21,8 @@ namespace IdentityServer.Services.User
         Task<ApiResponse<List<UserMenuResponseDto>>> GetUserMenusAsync(string userId);
         Task<ApiResponse<UserResponseDto>> GetUserByIdAsync(string id);
         Task<ApiResponse<bool>> ChangePasswordAsync(string userId, string currentPassword, string newPassword);
+        Task<ApiResponse<PasswordResetLookupResponseDto>> LookupForPasswordResetAsync(string email);
+        Task<ApiResponse<bool>> ResetPasswordByServiceAsync(string userId, string newPassword);
         Task<ApiResponse<UserContactResponseDto>> GetContactInfoByUserId(string userId);
         Task<ApiResponse<bool>> EmailVerified(string userId);
         Task<ApiResponse<bool>> UpdateEmailAsync(UpdateEmailRequestDto model);

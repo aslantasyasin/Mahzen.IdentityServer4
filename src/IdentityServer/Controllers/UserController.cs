@@ -102,6 +102,39 @@ namespace IdentityServer.Controllers
             return Ok(result);
         }
 
+        // Şifre sıfırlama akışının iki ucu. İkisi de [InternalCallerOnly]:
+        // çağıranları son kullanıcı değil Notification servisi ve ortada
+        // doğrulanabilecek bir kullanıcı token'ı yok.
+        //
+        // Korumanın gateway'de DEĞİL burada olması bilinçli — gerekçe
+        // InternalCallerOnlyAttribute'ta yazılı: IDS4 dışarıya doğrudan açık
+        // olmak zorunda, gateway'e konan bir kontrol atlanarak aşılırdı.
+        [HttpPost("LookupForPasswordReset")]
+        [AllowAnonymous]
+        [InternalCallerOnly]
+        public async Task<IActionResult> LookupForPasswordReset([FromBody] PasswordResetLookupRequestDto model)
+        {
+            var result = await _userService.LookupForPasswordResetAsync(model.Email);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
+
+        [HttpPost("ResetPasswordByService")]
+        [AllowAnonymous]
+        [InternalCallerOnly]
+        public async Task<IActionResult> ResetPasswordByService([FromBody] ResetPasswordByServiceRequestDto model)
+        {
+            var result = await _userService.ResetPasswordByServiceAsync(model.UserId, model.NewPassword);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
+
         [HttpPost("UpdateEmail")]
         public async Task<IActionResult> UpdateEmail([FromBody] UpdateEmailRequestDto model)
         {
