@@ -6,6 +6,7 @@ using System.Security.Claims;
 using System.Threading.Tasks;
 using System.Windows.Markup;
 using AutoMapper;
+using IdentityServer.Helper;
 using IdentityServer.Models;
 using IdentityServer.Models.Base;
 using IdentityServer.Models.Dto.Role;
@@ -633,7 +634,8 @@ namespace IdentityServer.Services.User
                     // Operasyonun "neden mail gitmedi" sorusunu cevaplayabileceği tek yer
                     // loglardır; istemciye dönen yanıt bilinçli olarak hiçbir ipucu taşımıyor.
                     _logger.LogInformation(
-                        "PasswordResetLookup: kayıtlı kullanıcı yok. Email={Email}", normalizedEmail);
+                        "PasswordResetLookup: kayıtlı kullanıcı yok. Email={Email}",
+                        LogMaskHelper.MaskEmail(normalizedEmail));
                     return ApiResponse<PasswordResetLookupResponseDto>.Success(
                         new PasswordResetLookupResponseDto { Status = PasswordResetLookupResponseDto.StatusNotFound });
                 }
