@@ -111,7 +111,7 @@ namespace IdentityServer.Controllers
         // olmak zorunda, gateway'e konan bir kontrol atlanarak aşılırdı.
         [HttpPost("LookupForPasswordReset")]
         [AllowAnonymous]
-        [InternalCallerOnly]
+        [InternalCallerOnly(Required = true)]
         public async Task<IActionResult> LookupForPasswordReset([FromBody] PasswordResetLookupRequestDto model)
         {
             var result = await _userService.LookupForPasswordResetAsync(model.Email);
@@ -124,7 +124,7 @@ namespace IdentityServer.Controllers
 
         [HttpPost("ResetPasswordByService")]
         [AllowAnonymous]
-        [InternalCallerOnly]
+        [InternalCallerOnly(Required = true)]
         public async Task<IActionResult> ResetPasswordByService([FromBody] ResetPasswordByServiceRequestDto model)
         {
             var result = await _userService.ResetPasswordByServiceAsync(model.UserId, model.NewPassword);

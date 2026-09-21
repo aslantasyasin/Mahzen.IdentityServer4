@@ -24,11 +24,24 @@ namespace IdentityServer.Helper
     // NEDEN anahtar tanımlı değilken geçiriyor: deploy sırası (önce IDS4, sonra BFF)
     // kayıt akışını kesmemeli. Bu bilinçli bir "fail-open"; her istekte Warning düşer,
     // yapılandırma unutulursa log'dan görülür.
+    //
+    // AMA bu davranış her uç için kabul edilebilir DEĞİL. Şifre sıfırlama uçları
+    // (LookupForPasswordReset, ResetPasswordByService) bu filtrenin arkasına
+    // konduğunda denklem değişti: anahtarsız bir IDS4, yalnızca e-posta bilen
+    // birinin herhangi bir hesabın şifresini değiştirebilmesi demek. Önce lookup
+    // ile userId alınır, sonra reset çağrılır; koda hiç ihtiyaç yoktur.
+    //
+    // Required = true o uçlar için fail-CLOSED yapar: anahtar yoksa istek reddedilir.
+    // Geçiş riski yok, anahtar üç serviste de tanımlı.
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class)]
     public sealed class InternalCallerOnlyAttribute : Attribute, IAuthorizationFilter
     {
         public const string HeaderName = "X-Internal-Key";
         private const string ConfigurationKey = "Internal:ApiKey";
+
+        // Anahtar yapılandırılmamışken ucun ne yapacağı. Varsayılan (false)
+        // mevcut davranışı korur; hesap devralmaya açık uçlarda true verilir.
+        public bool Required { get; init; }
 
         public void OnAuthorization(AuthorizationFilterContext context)
         {
@@ -40,6 +53,18 @@ namespace IdentityServer.Helper
 
             if (string.IsNullOrWhiteSpace(expectedKey))
             {
+                if (Required)
+                {
+                    // 503, 403 DEĞİL: sorun çağıranın kimliğinde değil, sunucunun
+                    // yapılandırmasında. Ayrım, operasyonun logda doğru yeri
+                    // aramasını sağlıyor.
+                    logger.LogError(
+                        "Internal:ApiKey yapılandırılmamış; {Path} kapatıldı. Anahtar tanımlanmadan bu uç açılamaz.",
+                        path);
+                    context.Result = new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+                    return;
+                }
+
                 logger.LogWarning(
                     "Internal:ApiKey yapılandırılmamış; {Path} kimliksiz çağrılara açık. Anahtar tanımlanmalı.",
                     path);
