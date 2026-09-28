@@ -14,6 +14,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Reflection;
+using System.Security.Claims;
 using IdentityServer4.EntityFramework.DbContexts;
 using IdentityServer.Services;
 using IdentityServer.Services.Login;
@@ -190,14 +191,15 @@ namespace IdentityServer
 
                 options.AddPolicy("RequireAdminRole", policy =>
                 {
-                    policy.RequireAssertion(ctx =>
-                    {
-                        var role = ctx.User.FindFirst("role")?.Value;
-                        return string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase);
-                    });
+                    policy.RequireAssertion(ctx => HasAdminRole(ctx.User));
                 });
             });
         }
+
+        public static bool HasAdminRole(ClaimsPrincipal user) =>
+            user.Claims.Any(c =>
+                (c.Type == "role" || c.Type == ClaimTypes.Role) &&
+                string.Equals(c.Value, "Admin", StringComparison.OrdinalIgnoreCase));
 
         public void Configure(IApplicationBuilder app)
         {

@@ -35,6 +35,7 @@ namespace IdentityServer.Controllers
         }
         
         [HttpGet("Get/{id}")]
+        [Authorize(Policy = "RequireAdminRole")]
         public async Task<IActionResult> GetUserById(string id)
         {
             var result = await _userService.GetUserByIdAsync(id);
@@ -186,6 +187,7 @@ namespace IdentityServer.Controllers
         }
 
         [HttpPut("UpdateUser/{userId}")]
+        [Authorize(Policy = "RequireAdminRole")]
         public async Task<IActionResult> UpdateUser(string userId, [FromBody] ApplicationUserUpdateRequestDto userRequestDto)
         {
             var result = await _userService.UpdateUserAsync(userId, userRequestDto);
@@ -197,6 +199,7 @@ namespace IdentityServer.Controllers
         }
 
         [HttpDelete("DeleteUser/{userId}")]
+        [Authorize(Policy = "RequireAdminRole")]
         public async Task<IActionResult> DeleteUser(string userId)
         {
             var result = await _userService.DeleteUserAsync(userId);
@@ -208,6 +211,7 @@ namespace IdentityServer.Controllers
         }
 
         [HttpGet("UserIsActiveControl")]
+        [Authorize(Policy = "RequireAdminRole")]
         public async Task<IActionResult> UserIsActiveControl(string userName)
         {
             var result = await _userService.UserIsActiveControlAsync(userName);
@@ -219,6 +223,7 @@ namespace IdentityServer.Controllers
         }
 
         [HttpGet("GetRolesByUserId")]
+        [Authorize(Policy = "RequireAdminRole")]
         public async Task<IActionResult> GetRolesByUserId(string userId)
         {
             var result = await _userService.GetRoleByUserIdAsync(userId);
@@ -230,6 +235,7 @@ namespace IdentityServer.Controllers
         }
 
         [HttpPost("AddUserRole")]
+        [Authorize(Policy = "RequireAdminRole")]
         public async Task<IActionResult> AddUserRole(UserRoleRequestDto addUserRoleRequest)
         {
             var result = await _userService.AddUserRoleAsync(addUserRoleRequest);
@@ -241,6 +247,7 @@ namespace IdentityServer.Controllers
         }
 
         [HttpPost("DeleteUserRole")]
+        [Authorize(Policy = "RequireAdminRole")]
         public async Task<IActionResult> DeleteUserRole(UserRoleRequestDto addUserRoleRequest)
         {
             var result = await _userService.DeleteUserRoleAsync(addUserRoleRequest);
@@ -252,6 +259,7 @@ namespace IdentityServer.Controllers
         }
 
         [HttpGet("GetUserMenus")]
+        [Authorize(Policy = "RequireAdminRole")]
         public async Task<IActionResult> GetUserMenus(string userId)
         {
             var result = await _userService.GetUserMenusAsync(userId);

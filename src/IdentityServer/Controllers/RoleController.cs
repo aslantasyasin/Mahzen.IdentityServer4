@@ -15,6 +15,7 @@ namespace IdentityServer.Controllers
     [Route("api/[controller]")]
     [ApiController]
     [Authorize(LocalApi.PolicyName)]
+    [Authorize(Policy = "RequireAdminRole")]
     public class RoleController : ControllerBase
     {
         private readonly IRoleService _roleService;
