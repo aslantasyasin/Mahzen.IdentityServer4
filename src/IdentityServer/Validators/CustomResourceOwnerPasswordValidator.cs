@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using IdentityServer.Models;
@@ -48,12 +50,12 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
         }
 
         var claims = await _userManager.GetClaimsAsync(user);
-        var allowedClientIds = claims
+        var userTypes = claims
             .Where(c => c.Type == "user_type") // ihtiyaca göre "allowed_client" gibi daha doğru bir tipe taşıyın
             .Select(c => c.Value)
             .ToHashSet();
 
-        if (!allowedClientIds.Contains("Admin") && !allowedClientIds.Contains(clientId))
+        if (!IsClientAllowed(userTypes, context.Request.Client))
         {
             context.Result = new GrantValidationResult(TokenRequestErrors.InvalidGrant, "Bu istemci için yetkiniz yok");
             return;
@@ -61,5 +63,16 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
 
         // 4) Başarılı
         context.Result = new GrantValidationResult(subject: user.Id, authenticationMethod: "password");
+    }
+
+    public const string AllowedUserTypesProperty = "allowed_user_types";
+
+    public static bool IsClientAllowed(IReadOnlySet<string> userTypes, Client client)
+    {
+        if (userTypes.Contains("Admin") || userTypes.Contains(client.ClientId))
+            return true;
+
+        return client.Properties.TryGetValue(AllowedUserTypesProperty, out var allowed)
+            && allowed.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Any(userTypes.Contains);
     }
 }
