@@ -24,6 +24,7 @@ namespace IdentityServer.Services.User
         Task<ApiResponse<PasswordResetLookupResponseDto>> LookupForPasswordResetAsync(string email);
         Task<ApiResponse<bool>> ResetPasswordByServiceAsync(string userId, string newPassword);
         Task<ApiResponse<UserContactResponseDto>> GetContactInfoByUserId(string userId);
+        Task<ApiResponse<bool>> GetEmailConfirmedAsync(string userId);
         Task<ApiResponse<bool>> EmailVerified(string userId);
         Task<ApiResponse<bool>> UpdateEmailAsync(UpdateEmailRequestDto model);
         Task<ApiResponse<bool>> UpdateProfileInfoAsync(UpdateProfileInfoRequestDto model);

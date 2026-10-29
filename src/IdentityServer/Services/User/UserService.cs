@@ -767,7 +767,29 @@ namespace IdentityServer.Services.User
                 _logger.LogError(ex, "İletişim bilgisi okunurken beklenmeyen hata oluştu. UserId={UserId}", userId);
                 response.Errors.Add(UnexpectedErrorMessage);
             }
-            
+
+            return response;
+        }
+
+        public async Task<ApiResponse<bool>> GetEmailConfirmedAsync(string userId)
+        {
+            var response = new ApiResponse<bool>();
+            try
+            {
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
+                }
+
+                response.Data = user.EmailConfirmed;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "E-posta doğrulama durumu okunurken beklenmeyen hata oluştu. UserId={UserId}", userId);
+                response.Errors.Add(UnexpectedErrorMessage);
+            }
+
             return response;
         }
         

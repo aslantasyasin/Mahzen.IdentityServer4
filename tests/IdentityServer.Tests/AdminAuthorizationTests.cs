@@ -30,6 +30,7 @@ public class AdminAuthorizationTests
         nameof(UserController.UpdateProfileInfo),
         nameof(UserController.UpdateEmail),
         nameof(UserController.GetUserChangeLogs),
+        nameof(UserController.GetEmailConfirmed),
     };
 
     private static bool RequiresAdmin(MethodInfo action) =>
@@ -56,6 +57,11 @@ public class AdminAuthorizationTests
     [MemberData(nameof(SelfServiceUserActionData))]
     public void Self_service_user_actions_stay_open_to_customers(string action) =>
         Assert.False(RequiresAdmin(Action(typeof(UserController), action)), $"{action} müşteriye kapanmış");
+
+    [Theory]
+    [MemberData(nameof(SelfServiceUserActionData))]
+    public void Self_service_user_actions_require_a_user_token(string action) =>
+        Assert.Empty(Action(typeof(UserController), action).GetCustomAttributes<AllowAnonymousAttribute>());
 
     [Fact]
     public void Every_role_action_requires_admin()

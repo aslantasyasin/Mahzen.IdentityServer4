@@ -186,6 +186,21 @@ namespace IdentityServer.Controllers
             return Ok(result);
         }
 
+        [HttpGet("EmailConfirmed")]
+        public async Task<IActionResult> GetEmailConfirmed()
+        {
+            var userId = User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return BadRequest(new[] { "Token'dan kullanıcı id alınamadı." });
+
+            var result = await _userService.GetEmailConfirmedAsync(userId);
+
+            if (result.HasError)
+                return BadRequest(result);
+
+            return Ok(result);
+        }
+
         [HttpPut("UpdateUser/{userId}")]
         [Authorize(Policy = "RequireAdminRole")]
         public async Task<IActionResult> UpdateUser(string userId, [FromBody] ApplicationUserUpdateRequestDto userRequestDto)
