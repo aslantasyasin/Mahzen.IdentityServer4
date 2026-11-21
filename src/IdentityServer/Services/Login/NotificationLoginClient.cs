@@ -13,6 +13,7 @@ namespace IdentityServer.Services.Login;
 public sealed class NotificationLoginClient
 {
     public const string SendPath = "/api/email/send-internal";
+    public const string KeyConfiguration = "Internal:MailApiKey";
 
     private readonly HttpClient _http;
     private readonly LoginMailerOptions _options;
@@ -35,13 +36,20 @@ public sealed class NotificationLoginClient
             return false;
         }
 
+        var key = _configuration[KeyConfiguration];
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            _logger.LogError("login_mail_failed Template={Template} Reason=mail_api_key_missing", templateKey);
+            return false;
+        }
+
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, _options.BaseUrl.TrimEnd('/') + SendPath)
             {
                 Content = JsonContent.Create(new { to, templateKey, model }),
             };
-            request.Headers.Add(InternalCallerOnlyAttribute.HeaderName, _configuration["Internal:ApiKey"] ?? "");
+            request.Headers.Add(InternalCallerOnlyAttribute.HeaderName, key);
             using var timeout = new System.Threading.CancellationTokenSource(_options.Timeout);
             using var response = await _http.SendAsync(request, timeout.Token);
             if (response.IsSuccessStatusCode) return true;
