@@ -3,9 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using IdentityServer.Models;
+using IdentityServer.Services.Login;
 using IdentityServer4.Models;
 using IdentityServer4.Validation;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace IdentityServer.Validators;
 
@@ -13,13 +17,25 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
 {
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly LoginProtectionService _loginProtection;
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<CustomResourceOwnerPasswordValidator> _logger;
 
     public CustomResourceOwnerPasswordValidator(
         SignInManager<ApplicationUser> signInManager,
-        UserManager<ApplicationUser> userManager)
+        UserManager<ApplicationUser> userManager,
+        LoginProtectionService loginProtection,
+        IHttpContextAccessor httpContextAccessor,
+        IConfiguration configuration,
+        ILogger<CustomResourceOwnerPasswordValidator> logger)
     {
         _signInManager = signInManager;
         _userManager = userManager;
+        _loginProtection = loginProtection;
+        _httpContextAccessor = httpContextAccessor;
+        _configuration = configuration;
+        _logger = logger;
     }
 
     public async Task ValidateAsync(ResourceOwnerPasswordValidationContext context)
@@ -34,7 +50,17 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
         }
 
         // 2) Parola doğrula (bu adım ROPC için zorunlu)
+        var source = LoginSource.Resolve(_httpContextAccessor.HttpContext, _configuration["Internal:ApiKey"]);
         var passwordOk = await _signInManager.CheckPasswordSignInAsync(user, context.Password, lockoutOnFailure: true);
+        if (passwordOk.IsLockedOut)
+        {
+            _logger.LogInformation("login_locked_out UserId={UserId} Source={Source}", user.Id, source);
+        }
+        else if (!passwordOk.Succeeded)
+        {
+            await _loginProtection.RecordFailedPasswordAsync(user.Id, source);
+        }
+
         if (!passwordOk.Succeeded)
         {
             context.Result = new GrantValidationResult(TokenRequestErrors.InvalidGrant, "Geçersiz kullanıcı adı veya parola");
@@ -57,9 +83,13 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
 
         if (!IsClientAllowed(userTypes, context.Request.Client))
         {
+            _logger.LogWarning("login_rejected_user_type UserId={UserId} ClientId={ClientId} UserTypes={UserTypes}",
+                user.Id, clientId, string.Join(',', userTypes));
             context.Result = new GrantValidationResult(TokenRequestErrors.InvalidGrant, "Bu istemci için yetkiniz yok");
             return;
         }
+
+        await _loginProtection.EvaluateSuccessfulPasswordAsync(user.Id, source, userTypes.Contains("Admin"));
 
         // 4) Başarılı
         context.Result = new GrantValidationResult(subject: user.Id, authenticationMethod: "password");

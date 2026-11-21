@@ -84,7 +84,7 @@ namespace IdentityServer.Helper
 
         // Sabit zamanlı karşılaştırma: uzunluk dışında bilgi sızdırmaz, byte byte
         // deneyerek anahtar çıkarmayı engeller.
-        private static bool KeysMatch(string expected, string provided)
+        internal static bool KeysMatch(string expected, string provided)
         {
             if (string.IsNullOrEmpty(provided)) return false;
 

@@ -67,6 +67,12 @@ namespace IdentityServer
             services.AddScoped<IHybridRepository, HybridRepository>();
             services.AddScoped<IUserChangeLogService, UserChangeLogService>();
             services.AddScoped<IUserConsentService, UserConsentService>();
+            services.AddOptions<LoginProtectionOptions>()
+                .Bind(Configuration.GetSection(LoginProtectionOptions.Section))
+                .Validate(o => o.IsValid(), "LoginProtection ayarları geçersiz")
+                .ValidateOnStart();
+            services.AddScoped<ILoginThrottleStore, LoginThrottleStore>();
+            services.AddScoped<LoginProtectionService>();
 
             ///automapper
 
