@@ -26,6 +26,8 @@ namespace IdentityServer.Services.User
 {
     public class UserService : IUserService
     {
+        private const string PasswordMismatchCode = "PasswordMismatch";
+
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<ApplicationRole> _roleManager;
         private readonly UserInfo _userInfo;
@@ -832,6 +834,12 @@ namespace IdentityServer.Services.User
             if (user == null)
             {
                 return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
+            }
+
+            if (string.IsNullOrEmpty(model.CurrentPassword) || !await _userManager.CheckPasswordAsync(user, model.CurrentPassword))
+            {
+                _logger.LogWarning("update_email_password_mismatch UserId={UserId}", userId);
+                return ApiResponse<bool>.Fail(PasswordMismatchCode);
             }
 
             // Email zaten kullanılıyor mu kontrol et
