@@ -116,6 +116,17 @@ public class LoginProtectionServiceTests
         Assert.Equal(1, _store.Counts[(User, LoginProtectionService.AccountUntrustedScope, new DateTimeOffset(2026, 11, 21, 10, 0, 0, TimeSpan.Zero))]);
     }
 
+    [Theory]
+    [InlineData(false, "Outcome=wrong_password")]
+    [InlineData(true, "Outcome=locked")]
+    public async Task Attempts_while_locked_out_are_counted_and_labelled(bool locked, string label)
+    {
+        await Service().RecordFailedPasswordAsync(User, Source, whileLockedOut: locked);
+
+        Assert.Equal(1, _store.Counts[(User, "source:" + Source, new DateTimeOffset(2026, 11, 21, 10, 0, 0, TimeSpan.Zero))]);
+        Assert.Contains(_log.Entries, e => e.Message.StartsWith("login_failed_password") && e.Message.Contains(label));
+    }
+
     [Fact]
     public async Task Source_window_rolls_over_at_its_boundary()
     {

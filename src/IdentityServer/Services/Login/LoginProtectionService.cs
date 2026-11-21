@@ -27,7 +27,7 @@ public sealed class LoginProtectionService
         _clock = clock;
     }
 
-    public async Task RecordFailedPasswordAsync(string userId, string source)
+    public async Task RecordFailedPasswordAsync(string userId, string source, bool whileLockedOut = false)
     {
         if (_options.Mode == LoginProtectionMode.Off) return;
         var now = _clock.UtcNow;
@@ -37,8 +37,8 @@ public sealed class LoginProtectionService
             var accountFailures = await _store.IncrementAsync(userId, AccountUntrustedScope, WindowStart(now, _options.AccountWindow));
 
             _logger.LogInformation(
-                "login_failed_password UserId={UserId} Source={Source} SourceFailures={SourceFailures} AccountFailures={AccountFailures} Mode={Mode}",
-                userId, source, sourceFailures, accountFailures, _options.Mode);
+                "login_failed_password UserId={UserId} Source={Source} Outcome={Outcome} SourceFailures={SourceFailures} AccountFailures={AccountFailures} Mode={Mode}",
+                userId, source, whileLockedOut ? "locked" : "wrong_password", sourceFailures, accountFailures, _options.Mode);
 
             if (accountFailures == _options.AccountFailureLimit)
                 _logger.LogWarning(

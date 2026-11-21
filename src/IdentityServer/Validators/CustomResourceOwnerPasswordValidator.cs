@@ -52,13 +52,9 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
         // 2) Parola doğrula (bu adım ROPC için zorunlu)
         var source = LoginSource.Resolve(_httpContextAccessor.HttpContext, _configuration["Internal:ApiKey"]);
         var passwordOk = await _signInManager.CheckPasswordSignInAsync(user, context.Password, lockoutOnFailure: true);
-        if (passwordOk.IsLockedOut)
+        if (!passwordOk.Succeeded)
         {
-            _logger.LogInformation("login_locked_out UserId={UserId} Source={Source}", user.Id, source);
-        }
-        else if (!passwordOk.Succeeded)
-        {
-            await _loginProtection.RecordFailedPasswordAsync(user.Id, source);
+            await _loginProtection.RecordFailedPasswordAsync(user.Id, source, whileLockedOut: passwordOk.IsLockedOut);
         }
 
         if (!passwordOk.Succeeded)
