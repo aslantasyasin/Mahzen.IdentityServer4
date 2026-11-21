@@ -86,7 +86,7 @@ public sealed class LoginProtectionService
                     _logger.LogWarning("login_account_threshold_reached UserId={UserId} AccountAttempts={AccountAttempts} Mode={Mode}",
                         userId, accountAttempts, _options.Mode);
                     if (Enforcing && !string.IsNullOrWhiteSpace(email) &&
-                        !await NotifyAsync(userId, email, LoginMailTemplates.AttackNotice,
+                        await QueueFullAfterNotifyAsync(userId, email, LoginMailTemplates.AttackNotice,
                             new Dictionary<string, string> { ["At"] = TurkeyTime(now), ["Attempts"] = accountAttempts.ToString(CultureInfo.InvariantCulture) }, now))
                         await _store.MarkFlagAsync(userId, AttackNoticeKind, now - _options.AttackNoticeInterval - TimeSpan.FromSeconds(1));
                 }
@@ -224,13 +224,21 @@ public sealed class LoginProtectionService
     private Task<int> RecentSendsAsync(string userId, DateTimeOffset now) =>
         _store.CountAsync(userId, ChallengeSendsScope, WindowStart(now, ChallengeSendWindow));
 
-    private async Task<bool> NotifyAsync(string userId, string email, string template, IReadOnlyDictionary<string, string> model, DateTimeOffset now)
+    private async Task<bool> QueueFullAfterNotifyAsync(string userId, string email, string template, IReadOnlyDictionary<string, string> model, DateTimeOffset now)
     {
         var sentThisHour = await _store.IncrementAsync(userId, NoticesScope, WindowStart(now, TimeSpan.FromHours(1)));
-        var queued = sentThisHour <= NoticesPerUserPerHour && await _mailer.SendAsync(email, template, model);
-        if (queued) _logger.LogInformation("login_notice_sent UserId={UserId} Template={Template}", userId, template);
-        else _logger.LogError("login_notice_dropped UserId={UserId} Template={Template} SentThisHour={SentThisHour}", userId, template, sentThisHour);
-        return queued;
+        if (sentThisHour > NoticesPerUserPerHour)
+        {
+            _logger.LogWarning("login_notice_dropped UserId={UserId} Template={Template} Reason=user_cap SentThisHour={SentThisHour}", userId, template, sentThisHour);
+            return false;
+        }
+        if (await _mailer.SendAsync(email, template, model))
+        {
+            _logger.LogInformation("login_notice_sent UserId={UserId} Template={Template}", userId, template);
+            return false;
+        }
+        _logger.LogError("login_notice_dropped UserId={UserId} Template={Template} Reason=queue_full", userId, template);
+        return true;
     }
 
     public Task RecordWrongCodeAsync(string userId) =>
@@ -295,7 +303,7 @@ public sealed class LoginProtectionService
         _logger.LogInformation("login_device_issued UserId={UserId} Source={Source}", attempt.UserId, attempt.Source);
 
         if (Enforcing && _options.NotifyNewDevice && !string.IsNullOrWhiteSpace(attempt.Email))
-            await NotifyAsync(attempt.UserId, attempt.Email, LoginMailTemplates.NewDevice, new Dictionary<string, string> { ["At"] = TurkeyTime(now) }, now);
+            await QueueFullAfterNotifyAsync(attempt.UserId, attempt.Email, LoginMailTemplates.NewDevice, new Dictionary<string, string> { ["At"] = TurkeyTime(now) }, now);
         return token;
     }
 

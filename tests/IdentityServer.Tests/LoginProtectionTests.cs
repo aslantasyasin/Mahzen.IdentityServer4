@@ -758,7 +758,7 @@ public class LoginProtectionServiceTests
 
         Assert.Equal(LoginProtectionService.NoticesPerUserPerHour, _mail.Sent.Count(m => m.To == Email && m.Template == LoginMailTemplates.NewDevice));
         Assert.Contains(_mail.Sent, m => m.To == "kurban@ornek.com" && m.Template == LoginMailTemplates.NewDevice);
-        Assert.Contains(_log.Entries, e => e.Level == LogLevel.Error && e.Message.StartsWith("login_notice_dropped UserId=user-1"));
+        Assert.Contains(_log.Entries, e => e.Level == LogLevel.Warning && e.Message.StartsWith("login_notice_dropped UserId=user-1"));
     }
 
     [Fact]
@@ -771,6 +771,17 @@ public class LoginProtectionServiceTests
         await Login(service, false, source: "client:ip_more");
 
         Assert.Single(_mail.Sent, m => m.Template == LoginMailTemplates.AttackNotice);
+    }
+
+    [Fact]
+    public async Task A_capped_attack_notice_is_not_retried_on_every_attempt()
+    {
+        var service = Service();
+        for (var i = 0; i < 5; i++) await Login(service, true, source: $"client:own_{i}");
+        for (var i = 0; i < 31; i++) await Login(service, false, source: $"client:ip_{i}");
+
+        Assert.DoesNotContain(_mail.Sent, m => m.Template == LoginMailTemplates.AttackNotice);
+        Assert.Single(_log.Entries, e => e.Message.Contains("login_account_threshold_reached"));
     }
 
     [Fact]
