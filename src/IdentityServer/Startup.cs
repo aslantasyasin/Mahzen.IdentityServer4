@@ -74,6 +74,9 @@ namespace IdentityServer
             services.AddScoped<ILoginProtectionStore, LoginProtectionStore>();
             services.AddScoped<LoginProtectionService>();
             services.AddSingleton<LoginFallbackLimiter>();
+            services.AddSingleton<LoginWorkQueue>();
+            services.AddSingleton<ILoginWork>(sp => sp.GetRequiredService<LoginWorkQueue>());
+            services.AddHostedService<LoginWorkWorker>();
             services.Configure<LoginMailerOptions>(Configuration.GetSection(LoginMailerOptions.Section));
             services.AddHttpClient<NotificationLoginClient>();
             services.AddSingleton<QueuedLoginMailer>();

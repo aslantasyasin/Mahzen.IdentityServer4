@@ -56,7 +56,7 @@ SELECT ""SentAt"" FROM ids4.""LoginNotice"" WHERE ""UserId"" = @userId AND ""Kin
 
     private const string FindOpenChallengeSql = @"
 SELECT " + ChallengeColumns + @" FROM ids4.""LoginChallenge""
-WHERE ""UserId"" = @userId AND ""UsedAt"" IS NULL AND ""ExpiresAt"" > @now AND ""Attempts"" < ""MaxAttempts""
+WHERE ""UserId"" = @userId AND ""UsedAt"" IS NULL AND ""ExpiresAt"" > @now
 ORDER BY ""CreatedAt"" DESC LIMIT 1;";
 
     private const string GetChallengeSql = @"
@@ -67,7 +67,7 @@ INSERT INTO ids4.""LoginChallenge"" (""Id"", ""UserId"", ""CodeHash"", ""Attempt
 VALUES (@id, @userId, @codeHash, 0, @maxAttempts, @now, @expiresAt, NULL);";
 
     private const string RotateChallengeSql = @"
-UPDATE ids4.""LoginChallenge"" SET ""CodeHash"" = @codeHash, ""LastSentAt"" = @now
+UPDATE ids4.""LoginChallenge"" SET ""CodeHash"" = @codeHash, ""LastSentAt"" = @now, ""Attempts"" = 0
 WHERE ""Id"" = @id AND ""UsedAt"" IS NULL AND ""ExpiresAt"" > @now AND (""LastSentAt"" IS NULL OR ""LastSentAt"" <= @sentBefore);";
 
     private const string ConsumeAttemptSql = @"
@@ -86,7 +86,8 @@ RETURNING 1;";
     private const string ResetUserSql = @"
 DELETE FROM ids4.""LoginThrottle"" WHERE ""UserId"" = @userId;
 UPDATE ids4.""LoginDevice"" SET ""RevokedAt"" = @now, ""RevokeReason"" = @reason WHERE ""UserId"" = @userId AND ""RevokedAt"" IS NULL;
-UPDATE ids4.""LoginChallenge"" SET ""UsedAt"" = @now WHERE ""UserId"" = @userId AND ""UsedAt"" IS NULL;";
+UPDATE ids4.""LoginChallenge"" SET ""UsedAt"" = @now WHERE ""UserId"" = @userId AND ""UsedAt"" IS NULL;
+DELETE FROM ids4.""LoginNotice"" WHERE ""UserId"" = @userId AND ""Kind"" = 'under-attack';";
 
     private static readonly string[] CleanupSql =
     {

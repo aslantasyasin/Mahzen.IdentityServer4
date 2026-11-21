@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS ids4."LoginChallenge" (
     "UsedAt"      timestamptz  NULL,
     CONSTRAINT "PK_LoginChallenge" PRIMARY KEY ("Id")
 );
+ALTER TABLE ids4."LoginChallenge" ALTER COLUMN "LastSentAt" DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS "IX_LoginChallenge_Open" ON ids4."LoginChallenge" ("UserId", "CreatedAt") WHERE "UsedAt" IS NULL;
 CREATE INDEX IF NOT EXISTS "IX_LoginChallenge_ExpiresAt" ON ids4."LoginChallenge" ("ExpiresAt");
 
@@ -58,6 +59,9 @@ ORDER BY tablename, indexname;
 -- Beklenen: LoginChallenge (IX_LoginChallenge_ExpiresAt, IX_LoginChallenge_Open, PK_LoginChallenge),
 --           LoginDevice (IX_LoginDevice_ExpiresAt, IX_LoginDevice_RevokedAt, IX_LoginDevice_UserId, PK_LoginDevice, UQ_LoginDevice_TokenHash),
 --           LoginNotice (PK_LoginNotice)
+
+SELECT column_name, is_nullable FROM information_schema.columns
+WHERE table_schema = 'ids4' AND table_name = 'LoginChallenge' AND column_name = 'LastSentAt';   -- is_nullable = YES
 
 -- Uygulamanın koşullu yazımları; iz bırakmaz (ROLLBACK).
 BEGIN;

@@ -65,8 +65,9 @@ public class LoginProtectionServiceTests
         public Dictionary<Guid, (string User, string Hash, int Attempts, int Max, DateTimeOffset Created, DateTimeOffset Expires, DateTimeOffset? LastSent, DateTimeOffset? Used)> Challenges { get; } = new();
         public Dictionary<(string User, string Kind), DateTimeOffset> Notices { get; } = new();
         public bool Broken { get; set; }
+        public int Calls { get; private set; }
 
-        private void Check() { if (Broken) throw new InvalidOperationException("db down"); }
+        private void Check() { Calls++; if (Broken) throw new InvalidOperationException("db down"); }
 
         public Task<int> IncrementAsync(string userId, string scope, DateTimeOffset windowStart)
         {
@@ -127,7 +128,7 @@ public class LoginProtectionServiceTests
             Check();
             lock (_gate)
             {
-                var c = Challenges.Where(x => x.Value.User == userId && x.Value.Used is null && x.Value.Expires > now && x.Value.Attempts < x.Value.Max)
+                var c = Challenges.Where(x => x.Value.User == userId && x.Value.Used is null && x.Value.Expires > now)
                     .OrderByDescending(x => x.Value.Created).Select(x => Map(x.Key)).FirstOrDefault();
                 return Task.FromResult(c!);
             }
@@ -157,9 +158,8 @@ public class LoginProtectionServiceTests
             Check();
             lock (_gate)
             {
-                var c = Challenges[id];
-                if (c.Used is not null || c.Expires <= now || c.LastSent > sentBefore) return Task.FromResult(false);
-                Challenges[id] = c with { Hash = codeHash, LastSent = now };
+                if (!Challenges.TryGetValue(id, out var c) || c.Used is not null || c.Expires <= now || c.LastSent > sentBefore) return Task.FromResult(false);
+                Challenges[id] = c with { Hash = codeHash, LastSent = now, Attempts = 0 };
                 return Task.FromResult(true);
             }
         }
@@ -169,8 +169,7 @@ public class LoginProtectionServiceTests
             Check();
             lock (_gate)
             {
-                var c = Challenges[id];
-                if (c.Used is not null || c.Expires <= now || c.Attempts >= c.Max) return Task.FromResult(false);
+                if (!Challenges.TryGetValue(id, out var c) || c.Used is not null || c.Expires <= now || c.Attempts >= c.Max) return Task.FromResult(false);
                 Challenges[id] = c with { Attempts = c.Attempts + 1 };
                 return Task.FromResult(true);
             }
@@ -181,8 +180,7 @@ public class LoginProtectionServiceTests
             Check();
             lock (_gate)
             {
-                var c = Challenges[id];
-                if (c.Used is not null) return Task.FromResult(false);
+                if (!Challenges.TryGetValue(id, out var c) || c.Used is not null) return Task.FromResult(false);
                 Challenges[id] = c with { Used = now };
                 return Task.FromResult(true);
             }
@@ -222,6 +220,7 @@ public class LoginProtectionServiceTests
                     if (Devices[i].User == userId && Devices[i].Revoked is null) Devices[i] = Devices[i] with { Revoked = now, Reason = reason };
                 foreach (var id in Challenges.Keys.ToList())
                     if (Challenges[id].User == userId && Challenges[id].Used is null) Challenges[id] = Challenges[id] with { Used = now };
+                Notices.Remove((userId, "under-attack"));
             }
             return Task.CompletedTask;
         }
@@ -244,12 +243,26 @@ public class LoginProtectionServiceTests
             return Task.FromResult(true);
         }
         public string LastCode => Sent.Last(m => m.Template == LoginMailTemplates.Code).Model["Code"];
+        public string? LastCodeOrNull() => Sent.LastOrDefault(m => m.Template == LoginMailTemplates.Code).Model?["Code"];
         public int Count(string template) => Sent.Count(m => m.Template == template);
     }
 
     private sealed class FixedClock : ISystemClock
     {
         public DateTimeOffset UtcNow { get; set; } = Start;
+    }
+
+    internal sealed class ImmediateWork : ILoginWork
+    {
+        public LoginProtectionService? Service { get; set; }
+        public bool Defer { get; set; }
+        public List<string> Deferred { get; } = new();
+
+        public void Enqueue(string name, Func<LoginProtectionService, Task> job)
+        {
+            if (Defer) { Deferred.Add(name); return; }
+            job(Service!).GetAwaiter().GetResult();
+        }
     }
 
     private sealed class ListLogger : ILogger<LoginProtectionService>
@@ -268,15 +281,20 @@ public class LoginProtectionServiceTests
     private readonly FixedClock _clock = new();
     private readonly ListLogger _log = new();
     private readonly LoginFallbackLimiter _fallback = new();
+    private readonly ImmediateWork _work = new();
 
-    private LoginProtectionService Service(LoginProtectionMode mode = LoginProtectionMode.Enforce) =>
-        new(_store, _mail, _fallback, Options.Create(new LoginProtectionOptions { Mode = mode }), _log, _clock);
+    private LoginProtectionService Service(LoginProtectionMode mode = LoginProtectionMode.Enforce)
+    {
+        var service = new LoginProtectionService(_store, _mail, _work, _fallback, Options.Create(new LoginProtectionOptions { Mode = mode }), _log, _clock);
+        _work.Service = service;
+        return service;
+    }
 
     private static async Task<LoginOutcome> Login(LoginProtectionService service, bool passwordOk, string source = Source, long? device = null,
         bool admin = false, string? stepUpId = null, string? code = null, string user = User, string email = Email)
     {
-        var gate = await service.GetGateAsync(user, source, device, admin);
-        if (!passwordOk) await service.RecordFailedPasswordAsync(user, email, source, device);
+        var gate = await service.EnterAsync(user, email, source, device, admin);
+        if (!passwordOk) await service.RecordFailedPasswordAsync(user, source, device);
         return await service.CompleteAsync(new LoginAttempt(user, email, source, device, admin, stepUpId!, code!), gate, passwordOk);
     }
 
@@ -315,11 +333,10 @@ public class LoginProtectionServiceTests
     [Theory]
     [InlineData(false, "Outcome=wrong_password")]
     [InlineData(true, "Outcome=locked")]
-    public async Task Attempts_while_locked_out_are_counted_and_labelled(bool locked, string label)
+    public async Task Failed_attempts_are_labelled(bool locked, string label)
     {
-        await Service(LoginProtectionMode.Shadow).RecordFailedPasswordAsync(User, Email, Source, null, whileLockedOut: locked);
+        await Service(LoginProtectionMode.Shadow).RecordFailedPasswordAsync(User, Source, null, whileLockedOut: locked);
 
-        Assert.Equal(1, _store.Counts[(User, "source:" + Source, new DateTimeOffset(2026, 11, 21, 10, 0, 0, TimeSpan.Zero))]);
         Assert.Contains(Messages("login_failed_password"), m => m.Contains(label));
     }
 
@@ -363,6 +380,60 @@ public class LoginProtectionServiceTests
     }
 
     [Fact]
+    public async Task The_challenge_id_only_changes_with_time_not_with_the_password()
+    {
+        var service = Service();
+        await Fail(service, 5);
+        var x = await Login(service, false);
+
+        for (var i = 0; i < 5; i++) await Verify(service, x, "000000" == _mail.LastCodeOrNull() ? "111111" : "000000");
+        Assert.Equal(x.ChallengeId, (await Login(service, false)).ChallengeId);
+
+        for (var i = 0; i < 5; i++) await Verify(service, x, "000000", passwordOk: false);
+        Assert.Equal(x.ChallengeId, (await Login(service, false)).ChallengeId);
+
+        _clock.UtcNow = Start.AddMinutes(6);
+        Assert.NotEqual(x.ChallengeId, (await Login(service, false)).ChallengeId);
+    }
+
+    [Fact]
+    public async Task Under_the_gate_right_and_wrong_passwords_cost_the_same_store_calls()
+    {
+        var service = Service();
+        await Fail(service, 5);
+        await Login(service, false);
+        _work.Defer = true;
+
+        var before = _store.Calls;
+        await Login(service, false);
+        var wrong = _store.Calls - before;
+        before = _store.Calls;
+        await Login(service, true);
+        var right = _store.Calls - before;
+
+        Assert.Equal(wrong, right);
+        Assert.Contains("send_code", _work.Deferred);
+    }
+
+    [Fact]
+    public async Task Verifying_with_a_wrong_password_costs_the_same_as_a_wrong_code()
+    {
+        var service = Service();
+        await Fail(service, 5);
+        var stepUp = await Login(service, false);
+        _work.Defer = true;
+
+        var before = _store.Calls;
+        await Verify(service, stepUp, "000000", passwordOk: false);
+        var wrongPassword = _store.Calls - before;
+        before = _store.Calls;
+        await Verify(service, stepUp, "000000");
+        var wrongCode = _store.Calls - before;
+
+        Assert.Equal(wrongPassword, wrongCode);
+    }
+
+    [Fact]
     public async Task A_made_up_step_up_id_reveals_nothing_about_the_password()
     {
         var service = Service();
@@ -379,7 +450,7 @@ public class LoginProtectionServiceTests
     public async Task After_the_account_threshold_new_devices_need_a_code_for_a_day_not_just_two_windows()
     {
         var service = Service();
-        for (var i = 0; i < 20; i++) await Login(service, false, source: $"client:ip_{i}");
+        for (var i = 0; i < 21; i++) await Login(service, false, source: $"client:ip_{i}");
 
         _clock.UtcNow = Start.AddHours(3);
         Assert.Equal(LoginOutcomeKind.StepUpRequired, (await Login(service, true, source: "client:ip_new")).Kind);
@@ -579,13 +650,14 @@ public class LoginProtectionServiceTests
         var service = Service();
         var first = await Login(service, true);
         var device = await service.FindTrustedDeviceAsync(User, first.DeviceToken!);
+        var accountBefore = _store.Counts.Where(k => k.Key.Scope == LoginProtectionService.AccountUntrustedScope).Sum(k => k.Value);
 
         await Fail(service, 9, device: device);
         Assert.NotNull(await service.FindTrustedDeviceAsync(User, first.DeviceToken!));
         await Fail(service, 1, device: device);
 
         Assert.Null(await service.FindTrustedDeviceAsync(User, first.DeviceToken!));
-        Assert.DoesNotContain(_store.Counts.Keys, k => k.Scope == LoginProtectionService.AccountUntrustedScope);
+        Assert.Equal(accountBefore, _store.Counts.Where(k => k.Key.Scope == LoginProtectionService.AccountUntrustedScope).Sum(k => k.Value));
     }
 
     [Fact]
@@ -604,7 +676,7 @@ public class LoginProtectionServiceTests
         for (var i = 0; i < 11; i++)
         {
             _clock.UtcNow = Start.AddMinutes(i);
-            tokens.Add((await Login(service, true)).DeviceToken!);
+            tokens.Add((await Login(service, true, source: $"client:ip_{i}")).DeviceToken!);
         }
 
         Assert.Null(await service.FindTrustedDeviceAsync(User, tokens[0]));
@@ -625,6 +697,21 @@ public class LoginProtectionServiceTests
         Assert.Empty(_store.Counts.Keys.Where(k => k.User == User));
         Assert.Null(await service.FindTrustedDeviceAsync(User, first.DeviceToken!));
         Assert.Equal(LoginOutcomeKind.StepUpFailed, (await Verify(service, stepUp, _mail.LastCode)).Kind);
+    }
+
+    [Fact]
+    public async Task A_store_failure_while_verifying_a_code_never_lets_the_user_skip_it()
+    {
+        var service = Service();
+        await Fail(service, 5);
+        var stepUp = await Login(service, true);
+        var code = _mail.LastCode;
+        var gate = await service.EnterAsync(User, Email, Source, null, false);
+        _store.Broken = true;
+
+        var outcome = await service.CompleteAsync(new LoginAttempt(User, Email, Source, null, false, stepUp.ChallengeId.ToString()!, code), gate, true);
+
+        Assert.Equal(LoginOutcomeKind.StepUpFailed, outcome.Kind);
     }
 
     [Fact]

@@ -23,6 +23,7 @@ public sealed class LoginProtectionService
 
     private readonly ILoginProtectionStore _store;
     private readonly ILoginMailer _mailer;
+    private readonly ILoginWork _work;
     private readonly LoginFallbackLimiter _fallback;
     private readonly LoginProtectionOptions _options;
     private readonly ILogger<LoginProtectionService> _logger;
@@ -31,6 +32,7 @@ public sealed class LoginProtectionService
     public LoginProtectionService(
         ILoginProtectionStore store,
         ILoginMailer mailer,
+        ILoginWork work,
         LoginFallbackLimiter fallback,
         IOptions<LoginProtectionOptions> options,
         ILogger<LoginProtectionService> logger,
@@ -38,6 +40,7 @@ public sealed class LoginProtectionService
     {
         _store = store;
         _mailer = mailer;
+        _work = work;
         _fallback = fallback;
         _options = options.Value;
         _logger = logger;
@@ -60,84 +63,79 @@ public sealed class LoginProtectionService
         }
     }
 
-    public async Task<LoginGate> GetGateAsync(string userId, string source, long? deviceId, bool isAdmin)
+    public async Task<LoginGate> EnterAsync(string userId, string email, string source, long? deviceId, bool isAdmin)
     {
         if (_options.Mode == LoginProtectionMode.Off || deviceId is not null) return LoginGate.Open;
         var now = _clock.UtcNow;
         try
         {
-            var sourceFailures = await RecentFailuresAsync(userId, SourceScope(source), _options.SourceWindow, now);
-            var accountFailures = await RecentFailuresAsync(userId, AccountUntrustedScope, _options.AccountWindow, now);
+            await _store.IncrementAsync(userId, SourceScope(source), WindowStart(now, _options.SourceWindow));
+            await _store.IncrementAsync(userId, AccountUntrustedScope, WindowStart(now, _options.AccountWindow));
+            var sourceAttempts = await RecentCountAsync(userId, SourceScope(source), _options.SourceWindow, now);
+            var accountAttempts = await RecentCountAsync(userId, AccountUntrustedScope, _options.AccountWindow, now);
             var underAttackSince = await _store.GetFlagAsync(userId, UnderAttackKind);
-            var reason = sourceFailures >= _options.SourceFailureLimit ? "source"
-                : accountFailures >= _options.AccountFailureLimit || underAttackSince > now - _options.UnderAttackDuration ? "account"
+
+            if (accountAttempts > _options.AccountFailureLimit)
+            {
+                await _store.MarkFlagAsync(userId, UnderAttackKind, now);
+                underAttackSince = now;
+                if (await _store.TryClaimNoticeAsync(userId, AttackNoticeKind, now, now - _options.AttackNoticeInterval))
+                {
+                    _logger.LogWarning("login_account_threshold_reached UserId={UserId} AccountAttempts={AccountAttempts} Mode={Mode}",
+                        userId, accountAttempts, _options.Mode);
+                    if (Enforcing && !string.IsNullOrWhiteSpace(email))
+                        await _mailer.SendAsync(email, LoginMailTemplates.AttackNotice,
+                            new Dictionary<string, string> { ["At"] = TurkeyTime(now), ["Attempts"] = accountAttempts.ToString(CultureInfo.InvariantCulture) });
+                }
+            }
+
+            var reason = sourceAttempts > _options.SourceFailureLimit ? "source"
+                : underAttackSince > now - _options.UnderAttackDuration ? "account"
                 : isAdmin ? "admin"
                 : null;
             if (reason is null) return LoginGate.Open;
 
             _logger.LogInformation(
-                "login_step_up_required UserId={UserId} Source={Source} Reason={Reason} SourceFailures={SourceFailures} AccountFailures={AccountFailures} Mode={Mode}",
-                userId, source, reason, sourceFailures, accountFailures, _options.Mode);
+                "login_step_up_required UserId={UserId} Source={Source} Reason={Reason} SourceAttempts={SourceAttempts} AccountAttempts={AccountAttempts} Mode={Mode}",
+                userId, source, reason, sourceAttempts, accountAttempts, _options.Mode);
             return Enforcing ? new LoginGate(LoginGateKind.StepUp, reason) : LoginGate.Open;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "login_protection_store_failed Step=gate UserId={UserId} Mode={Mode} falling back to in-memory limits", userId, _options.Mode);
+            _logger.LogError(ex, "login_protection_store_failed Step=enter UserId={UserId} Mode={Mode} falling back to in-memory limits", userId, _options.Mode);
             if (!Enforcing) return LoginGate.Open;
             if (isAdmin) return new LoginGate(LoginGateKind.Unavailable, "admin");
-            return _fallback.IsBlocked(userId, source, _options.SourceFailureLimit) ? new LoginGate(LoginGateKind.Blocked, "fallback") : LoginGate.Open;
+            _fallback.RecordFailure(userId, source, _options.SourceWindow);
+            return _fallback.IsBlocked(userId, source, _options.SourceFailureLimit + 1) ? new LoginGate(LoginGateKind.Blocked, "fallback") : LoginGate.Open;
         }
     }
 
-    public async Task RecordFailedPasswordAsync(string userId, string email, string source, long? deviceId, bool whileLockedOut = false)
+    public async Task RecordFailedPasswordAsync(string userId, string source, long? deviceId, bool whileLockedOut = false)
     {
         if (_options.Mode == LoginProtectionMode.Off) return;
-        var now = _clock.UtcNow;
         var outcome = whileLockedOut ? "locked" : "wrong_password";
+        if (deviceId is not { } id)
+        {
+            _logger.LogInformation("login_failed_password UserId={UserId} Source={Source} Outcome={Outcome} Mode={Mode}", userId, source, outcome, _options.Mode);
+            return;
+        }
+
+        var now = _clock.UtcNow;
         try
         {
-            if (deviceId is { } id)
-            {
-                var deviceFailures = await _store.IncrementAsync(userId, DeviceScope(id), WindowStart(now, _options.DeviceWindow));
-                _logger.LogInformation(
-                    "login_failed_password UserId={UserId} Source={Source} Outcome={Outcome} Device={DeviceId} DeviceFailures={DeviceFailures} Mode={Mode}",
-                    userId, source, outcome, id, deviceFailures, _options.Mode);
-                if (deviceFailures >= _options.DeviceFailureLimit)
-                {
-                    await _store.RevokeDeviceAsync(id, now, "failures");
-                    _logger.LogWarning("login_device_revoked UserId={UserId} Device={DeviceId} Reason=failures DeviceFailures={DeviceFailures}",
-                        userId, id, deviceFailures);
-                }
-                return;
-            }
-
-            await _store.IncrementAsync(userId, SourceScope(source), WindowStart(now, _options.SourceWindow));
-            await _store.IncrementAsync(userId, AccountUntrustedScope, WindowStart(now, _options.AccountWindow));
-            var sourceFailures = await RecentFailuresAsync(userId, SourceScope(source), _options.SourceWindow, now);
-            var accountFailures = await RecentFailuresAsync(userId, AccountUntrustedScope, _options.AccountWindow, now);
-
+            var deviceFailures = await _store.IncrementAsync(userId, DeviceScope(id), WindowStart(now, _options.DeviceWindow));
             _logger.LogInformation(
-                "login_failed_password UserId={UserId} Source={Source} Outcome={Outcome} SourceFailures={SourceFailures} AccountFailures={AccountFailures} Mode={Mode}",
-                userId, source, outcome, sourceFailures, accountFailures, _options.Mode);
-
-            if (accountFailures >= _options.AccountFailureLimit)
+                "login_failed_password UserId={UserId} Source={Source} Outcome={Outcome} Device={DeviceId} DeviceFailures={DeviceFailures} Mode={Mode}",
+                userId, source, outcome, id, deviceFailures, _options.Mode);
+            if (deviceFailures >= _options.DeviceFailureLimit)
             {
-                await _store.MarkFlagAsync(userId, UnderAttackKind, now);
-                if (await _store.TryClaimNoticeAsync(userId, AttackNoticeKind, now, now - _options.AttackNoticeInterval))
-                {
-                    _logger.LogWarning(
-                        "login_account_threshold_reached UserId={UserId} AccountFailures={AccountFailures} Window={Window} Mode={Mode}",
-                        userId, accountFailures, _options.AccountWindow, _options.Mode);
-                    if (Enforcing && !string.IsNullOrWhiteSpace(email))
-                        await _mailer.SendAsync(email, LoginMailTemplates.AttackNotice,
-                            new Dictionary<string, string> { ["At"] = TurkeyTime(now), ["Failures"] = accountFailures.ToString(CultureInfo.InvariantCulture) });
-                }
+                await _store.RevokeDeviceAsync(id, now, "failures");
+                _logger.LogWarning("login_device_revoked UserId={UserId} Device={DeviceId} Reason=failures DeviceFailures={DeviceFailures}", userId, id, deviceFailures);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "login_protection_store_failed Step=record UserId={UserId} counted in memory instead", userId);
-            _fallback.RecordFailure(userId, source, _options.SourceWindow);
+            _logger.LogError(ex, "login_protection_store_failed Step=device_failure UserId={UserId}", userId);
         }
     }
 
@@ -148,9 +146,10 @@ public sealed class LoginProtectionService
         if (_options.Mode == LoginProtectionMode.Off) return credentialsOk ? LoginOutcome.Allowed() : LoginOutcome.Rejected();
 
         var now = _clock.UtcNow;
+        var verifying = Enforcing && !string.IsNullOrEmpty(attempt.StepUpId);
         try
         {
-            if (Enforcing && !string.IsNullOrEmpty(attempt.StepUpId))
+            if (verifying)
                 return await VerifyStepUpAsync(attempt, credentialsOk, now);
 
             if (gate.Kind == LoginGateKind.StepUp)
@@ -169,6 +168,8 @@ public sealed class LoginProtectionService
         catch (Exception ex)
         {
             _logger.LogError(ex, "login_protection_store_failed Step=complete UserId={UserId} Mode={Mode}", attempt.UserId, _options.Mode);
+            if (verifying) return LoginOutcome.StepUpFailed();
+            if (gate.Kind == LoginGateKind.StepUp) return LoginOutcome.TemporarilyUnavailable();
             if (!credentialsOk) return LoginOutcome.Rejected();
             return Enforcing && attempt.IsAdmin && attempt.DeviceId is null ? LoginOutcome.TemporarilyUnavailable() : LoginOutcome.Allowed();
         }
@@ -194,7 +195,32 @@ public sealed class LoginProtectionService
         return _store.CleanupAsync(now, WindowStart(now, longestWindow) - longestWindow, CleanupBatchSize);
     }
 
-    private async Task<int> RecentFailuresAsync(string userId, string scope, TimeSpan window, DateTimeOffset now)
+    public async Task SendCodeAsync(string userId, string email, Guid challengeId, DateTimeOffset? lastSentAt)
+    {
+        var now = _clock.UtcNow;
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            _logger.LogError("login_step_up_unavailable UserId={UserId} Reason=no_email", userId);
+            return;
+        }
+        if (lastSentAt > now - _options.ChallengeResendCooldown) return;
+        if (await _store.IncrementAsync(userId, ChallengeSendsScope, WindowStart(now, ChallengeSendWindow)) > _options.ChallengeSendsPerHour)
+        {
+            _logger.LogWarning("login_step_up_send_budget_exhausted UserId={UserId} Challenge={ChallengeId}", userId, challengeId);
+            return;
+        }
+
+        var code = LoginSecrets.NewCode();
+        if (!await _store.TryRotateChallengeCodeAsync(challengeId, LoginSecrets.HashCode(challengeId, code), now, now - _options.ChallengeResendCooldown))
+            return;
+        var queued = await _mailer.SendAsync(email, LoginMailTemplates.Code, new Dictionary<string, string> { ["Code"] = code });
+        _logger.LogInformation("login_step_up_code_sent UserId={UserId} Challenge={ChallengeId} Queued={Queued}", userId, challengeId, queued);
+    }
+
+    public Task RecordWrongCodeAsync(string userId) =>
+        _store.IncrementAsync(userId, StepUpFailuresScope, WindowStart(_clock.UtcNow, _options.StepUpFailureWindow));
+
+    private async Task<int> RecentCountAsync(string userId, string scope, TimeSpan window, DateTimeOffset now)
     {
         var current = WindowStart(now, window);
         return await _store.CountAsync(userId, scope, current) + await _store.CountAsync(userId, scope, current - window);
@@ -208,50 +234,33 @@ public sealed class LoginProtectionService
             await _store.CreateChallengeAsync(challengeId, attempt.UserId, LoginSecrets.HashCode(challengeId, LoginSecrets.NewCode()),
                 _options.ChallengeMaxAttempts, now, now + _options.ChallengeLifetime);
 
-        if (credentialsOk) await SendCodeAsync(attempt, challengeId, challenge?.LastSentAt, now);
+        if (credentialsOk)
+        {
+            var (userId, email, lastSentAt) = (attempt.UserId, attempt.Email, challenge?.LastSentAt);
+            _work.Enqueue("send_code", service => service.SendCodeAsync(userId, email, challengeId, lastSentAt));
+        }
         return LoginOutcome.StepUpRequired(challengeId);
-    }
-
-    private async Task SendCodeAsync(LoginAttempt attempt, Guid challengeId, DateTimeOffset? lastSentAt, DateTimeOffset now)
-    {
-        if (string.IsNullOrWhiteSpace(attempt.Email))
-        {
-            _logger.LogError("login_step_up_unavailable UserId={UserId} Reason=no_email", attempt.UserId);
-            return;
-        }
-        if (lastSentAt > now - _options.ChallengeResendCooldown) return;
-        if (await _store.IncrementAsync(attempt.UserId, ChallengeSendsScope, WindowStart(now, ChallengeSendWindow)) > _options.ChallengeSendsPerHour)
-        {
-            _logger.LogWarning("login_step_up_send_budget_exhausted UserId={UserId} Challenge={ChallengeId}", attempt.UserId, challengeId);
-            return;
-        }
-
-        var code = LoginSecrets.NewCode();
-        if (!await _store.TryRotateChallengeCodeAsync(challengeId, LoginSecrets.HashCode(challengeId, code), now, now - _options.ChallengeResendCooldown))
-            return;
-        var queued = await _mailer.SendAsync(attempt.Email, LoginMailTemplates.Code, new Dictionary<string, string> { ["Code"] = code });
-        _logger.LogInformation("login_step_up_code_sent UserId={UserId} Challenge={ChallengeId} Queued={Queued}", attempt.UserId, challengeId, queued);
     }
 
     private async Task<LoginOutcome> VerifyStepUpAsync(LoginAttempt attempt, bool credentialsOk, DateTimeOffset now)
     {
-        if (!credentialsOk) return StepUpFailed(attempt, "credentials");
         if (!Guid.TryParse(attempt.StepUpId, out var challengeId) || string.IsNullOrEmpty(attempt.StepUpCode))
             return StepUpFailed(attempt, "malformed");
 
-        if (await RecentFailuresAsync(attempt.UserId, StepUpFailuresScope, _options.StepUpFailureWindow, now) >= _options.StepUpFailureLimit)
-            return StepUpFailed(attempt, "too_many_wrong_codes");
-
+        var wrongCodes = await RecentCountAsync(attempt.UserId, StepUpFailuresScope, _options.StepUpFailureWindow, now);
         var challenge = await _store.GetChallengeAsync(challengeId);
-        if (challenge is null || challenge.UserId != attempt.UserId)
-            return StepUpFailed(attempt, "unknown_challenge");
+        var eligible = credentialsOk && wrongCodes < _options.StepUpFailureLimit && challenge is not null && challenge.UserId == attempt.UserId;
+        var consumed = await _store.TryConsumeChallengeAttemptAsync(eligible ? challengeId : Guid.Empty, now);
 
-        if (!await _store.TryConsumeChallengeAttemptAsync(challengeId, now))
-            return StepUpFailed(attempt, "no_attempts_left");
+        if (!credentialsOk) return StepUpFailed(attempt, "credentials");
+        if (wrongCodes >= _options.StepUpFailureLimit) return StepUpFailed(attempt, "too_many_wrong_codes");
+        if (!eligible) return StepUpFailed(attempt, "unknown_challenge");
+        if (!consumed) return StepUpFailed(attempt, "no_attempts_left");
 
         if (!LoginSecrets.HashesMatch(challenge.CodeHash, LoginSecrets.HashCode(challengeId, attempt.StepUpCode.Trim())))
         {
-            await _store.IncrementAsync(attempt.UserId, StepUpFailuresScope, WindowStart(now, _options.StepUpFailureWindow));
+            var userId = attempt.UserId;
+            _work.Enqueue("wrong_code", service => service.RecordWrongCodeAsync(userId));
             return StepUpFailed(attempt, "wrong_code");
         }
 

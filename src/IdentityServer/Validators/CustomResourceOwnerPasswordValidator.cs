@@ -74,7 +74,7 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
         var source = LoginSource.Resolve(_httpContextAccessor.HttpContext, _configuration["Internal:ApiKey"]);
         var raw = context.Request.Raw;
         var deviceId = await _loginProtection.FindTrustedDeviceAsync(user.Id, raw?[DeviceTokenParameter]);
-        var gate = await _loginProtection.GetGateAsync(user.Id, source, deviceId, userTypes.Contains("Admin"));
+        var gate = await _loginProtection.EnterAsync(user.Id, user.Email, source, deviceId, userTypes.Contains("Admin"));
 
         bool passwordOk;
         if (_loginProtection.Enforcing)
@@ -88,11 +88,11 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
                 _logger.LogInformation("login_locked_out UserId={UserId} Source={Source}", user.Id, source);
             passwordOk = signIn.Succeeded;
             if (!passwordOk)
-                await _loginProtection.RecordFailedPasswordAsync(user.Id, user.Email, source, deviceId, whileLockedOut: signIn.IsLockedOut);
+                await _loginProtection.RecordFailedPasswordAsync(user.Id, source, deviceId, whileLockedOut: signIn.IsLockedOut);
         }
 
         if (_loginProtection.Enforcing && !passwordOk)
-            await _loginProtection.RecordFailedPasswordAsync(user.Id, user.Email, source, deviceId);
+            await _loginProtection.RecordFailedPasswordAsync(user.Id, source, deviceId);
 
         if (passwordOk && !typeAllowed)
             _logger.LogWarning("login_rejected_user_type UserId={UserId} ClientId={ClientId} UserTypes={UserTypes}",

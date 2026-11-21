@@ -80,8 +80,10 @@ public class PasswordValidatorTests
     private (CustomResourceOwnerPasswordValidator Validator, FakeSignInManager SignIn) Create(LoginProtectionMode mode)
     {
         var signIn = new FakeSignInManager(_users);
-        var protection = new LoginProtectionService(_store, _mail, new LoginFallbackLimiter(), Options.Create(new LoginProtectionOptions { Mode = mode }),
+        var work = new LoginProtectionServiceTests.ImmediateWork();
+        var protection = new LoginProtectionService(_store, _mail, work, new LoginFallbackLimiter(), Options.Create(new LoginProtectionOptions { Mode = mode }),
             NullLogger<LoginProtectionService>.Instance, new FixedClock());
+        work.Service = protection;
         var http = new HttpContextAccessor { HttpContext = new DefaultHttpContext { Connection = { RemoteIpAddress = System.Net.IPAddress.Parse("10.0.0.7") } } };
         var validator = new CustomResourceOwnerPasswordValidator(signIn, _users, protection, http,
             new ConfigurationBuilder().Build(), NullLogger<CustomResourceOwnerPasswordValidator>.Instance);
@@ -194,6 +196,26 @@ public class PasswordValidatorTests
             (CustomResourceOwnerPasswordValidator.StepUpCodeParameter, _mail.LastCode));
         await validator.ValidateAsync(verify);
         Assert.False(verify.Result.IsError);
+    }
+
+    [Fact]
+    public async Task Under_the_gate_a_rejected_user_type_gets_the_same_answer_as_a_wrong_password()
+    {
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
+        _users.PasswordOk = false;
+        for (var i = 0; i < 6; i++) await validator.ValidateAsync(Context());
+        var wrong = Context();
+        await validator.ValidateAsync(wrong);
+
+        _users.PasswordOk = true;
+        _users.UserTypes = new[] { "Default" };
+        var rejectedType = Context();
+        await validator.ValidateAsync(rejectedType);
+
+        Assert.Equal(wrong.Result.ErrorDescription, rejectedType.Result.ErrorDescription);
+        Assert.Equal(wrong.Result.CustomResponse[CustomResourceOwnerPasswordValidator.StepUpIdParameter],
+            rejectedType.Result.CustomResponse[CustomResourceOwnerPasswordValidator.StepUpIdParameter]);
+        Assert.Empty(_mail.Sent);
     }
 
     [Fact]
