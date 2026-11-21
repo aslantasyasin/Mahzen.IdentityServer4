@@ -1,4 +1,5 @@
-﻿using System;
+﻿using IdentityServer.Services.Login;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -35,6 +36,7 @@ namespace IdentityServer.Services.User
         private readonly IUserConsentService _userConsentService;
         private readonly ILogger<UserService> _logger;
         private readonly IPersistedGrantService _persistedGrantService;
+        private readonly LoginProtectionService _loginProtection;
 
         // B2C kaydında alınması zorunlu onaylar. Tek otorite burasıdır; yeni bir
         // zorunlu doküman eklenirse yalnızca bu dizi güncellenir.
@@ -44,8 +46,9 @@ namespace IdentityServer.Services.User
             ConsentDocumentType.PrivacyPolicy
         };
 
-        public UserService(UserManager<ApplicationUser> userManager, RoleManager<ApplicationRole> roleManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService, IUserConsentService userConsentService, ILogger<UserService> logger, IPersistedGrantService persistedGrantService)
+        public UserService(UserManager<ApplicationUser> userManager, RoleManager<ApplicationRole> roleManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService, IUserConsentService userConsentService, ILogger<UserService> logger, IPersistedGrantService persistedGrantService, LoginProtectionService loginProtection)
         {
+            _loginProtection = loginProtection;
             _userManager = userManager;
             _userInfo = new UserInfo(serviceScopeFactory);
             _mapper = mapper;
@@ -731,6 +734,8 @@ namespace IdentityServer.Services.User
                         "Eski refresh token'lar hâlâ geçerli olabilir, elle iptal gerekir. UserId={UserId}",
                         userId);
                 }
+
+                await _loginProtection.ResetUserAsync(userId, "password_reset");
 
                 await _userChangeLogService.LogChangeAsync(userId, "PasswordReset", "***", "***", userId);
                 _logger.LogInformation("Şifre sıfırlandı. UserId={UserId}", userId);

@@ -71,8 +71,11 @@ namespace IdentityServer
                 .Bind(Configuration.GetSection(LoginProtectionOptions.Section))
                 .Validate(o => o.IsValid(), "LoginProtection ayarları geçersiz")
                 .ValidateOnStart();
-            services.AddScoped<ILoginThrottleStore, LoginThrottleStore>();
+            services.AddScoped<ILoginProtectionStore, LoginProtectionStore>();
             services.AddScoped<LoginProtectionService>();
+            services.Configure<LoginMailerOptions>(Configuration.GetSection(LoginMailerOptions.Section));
+            services.AddHttpClient<ILoginMailer, NotificationLoginMailer>();
+            services.AddHostedService<LoginProtectionCleanupWorker>();
 
             ///automapper
 

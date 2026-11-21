@@ -15,6 +15,12 @@ namespace IdentityServer.Validators;
 
 public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValidator
 {
+    public const string DeviceTokenParameter = "device_token";
+    public const string StepUpIdParameter = "step_up_id";
+    public const string StepUpCodeParameter = "step_up_code";
+    public const string StepUpRequiredDescription = "step_up_required";
+    public const string StepUpFailedDescription = "invalid_step_up_code";
+
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly LoginProtectionService _loginProtection;
@@ -51,10 +57,16 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
 
         // 2) Parola doğrula (bu adım ROPC için zorunlu)
         var source = LoginSource.Resolve(_httpContextAccessor.HttpContext, _configuration["Internal:ApiKey"]);
-        var passwordOk = await _signInManager.CheckPasswordSignInAsync(user, context.Password, lockoutOnFailure: true);
+        var raw = context.Request?.Raw;
+        var deviceId = await _loginProtection.FindTrustedDeviceAsync(user.Id, raw?[DeviceTokenParameter]);
+        var passwordOk = await _signInManager.CheckPasswordSignInAsync(user, context.Password, lockoutOnFailure: !_loginProtection.Enforcing);
+        if (passwordOk.IsLockedOut)
+        {
+            _logger.LogInformation("login_locked_out UserId={UserId} Source={Source}", user.Id, source);
+        }
         if (!passwordOk.Succeeded)
         {
-            await _loginProtection.RecordFailedPasswordAsync(user.Id, source, whileLockedOut: passwordOk.IsLockedOut);
+            await _loginProtection.RecordFailedPasswordAsync(user.Id, user.Email, source, deviceId, whileLockedOut: passwordOk.IsLockedOut);
         }
 
         if (!passwordOk.Succeeded)
@@ -85,10 +97,17 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
             return;
         }
 
-        await _loginProtection.EvaluateSuccessfulPasswordAsync(user.Id, source, userTypes.Contains("Admin"));
+        var outcome = await _loginProtection.CompleteAsync(new LoginAttempt(
+            user.Id, user.Email, source, deviceId, userTypes.Contains("Admin"), raw?[StepUpIdParameter], raw?[StepUpCodeParameter]));
 
-        // 4) Başarılı
-        context.Result = new GrantValidationResult(subject: user.Id, authenticationMethod: "password");
+        context.Result = outcome.Kind switch
+        {
+            LoginOutcomeKind.StepUpRequired => new GrantValidationResult(TokenRequestErrors.InvalidGrant, StepUpRequiredDescription,
+                new Dictionary<string, object> { [StepUpIdParameter] = outcome.ChallengeId!.Value.ToString() }),
+            LoginOutcomeKind.StepUpFailed => new GrantValidationResult(TokenRequestErrors.InvalidGrant, StepUpFailedDescription),
+            _ => new GrantValidationResult(subject: user.Id, authenticationMethod: "password",
+                customResponse: outcome.DeviceToken is null ? null : new Dictionary<string, object> { [DeviceTokenParameter] = outcome.DeviceToken }),
+        };
     }
 
     public const string AllowedUserTypesProperty = "allowed_user_types";

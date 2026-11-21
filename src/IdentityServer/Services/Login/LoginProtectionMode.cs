@@ -4,4 +4,5 @@ public enum LoginProtectionMode
 {
     Off,
     Shadow,
+    Enforce,
 }
