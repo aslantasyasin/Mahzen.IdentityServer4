@@ -24,21 +24,18 @@ public sealed class LoginMailWorker : BackgroundService
     {
         try
         {
-            while (!stoppingToken.IsCancellationRequested)
+            while (true)
             {
-                if (!_queue.Codes.TryRead(out var mail) && !_queue.Notices.TryRead(out mail))
-                {
-                    await Task.WhenAny(_queue.Codes.WaitToReadAsync(stoppingToken).AsTask(), _queue.Notices.WaitToReadAsync(stoppingToken).AsTask());
-                    continue;
-                }
+                await _queue.Signal.WaitAsync(stoppingToken);
+                if (!_queue.Codes.TryRead(out var mail) && !_queue.Notices.TryRead(out mail)) continue;
                 using var scope = _scopes.CreateScope();
                 await scope.ServiceProvider.GetRequiredService<NotificationLoginClient>().SendAsync(mail.To, mail.TemplateKey, mail.Model);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
+            var pending = _queue.Codes.Count + _queue.Notices.Count;
+            if (pending > 0) _logger.LogWarning("login_mail_stopped_with_pending Count={Count}", pending);
         }
-        var pending = _queue.Codes.Count + _queue.Notices.Count;
-        if (pending > 0) _logger.LogWarning("login_mail_stopped_with_pending Count={Count}", pending);
     }
 }

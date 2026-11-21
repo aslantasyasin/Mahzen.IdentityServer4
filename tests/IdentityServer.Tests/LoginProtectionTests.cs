@@ -237,8 +237,11 @@ public class LoginProtectionServiceTests
     internal sealed class RecordingMailer : ILoginMailer
     {
         public List<(string To, string Template, IReadOnlyDictionary<string, string> Model)> Sent { get; } = new();
+        public bool Refuse { get; set; }
+
         public Task<bool> SendAsync(string to, string templateKey, IReadOnlyDictionary<string, string> model)
         {
+            if (Refuse) return Task.FromResult(false);
             lock (Sent) Sent.Add((to, templateKey, model));
             return Task.FromResult(true);
         }
@@ -723,10 +726,51 @@ public class LoginProtectionServiceTests
         Assert.Equal(LoginOutcomeKind.Allowed, (await Login(service, true)).Kind);
         await Fail(service, 5);
 
-        Assert.Equal(LoginOutcomeKind.Rejected, (await Login(service, true)).Kind);
+        Assert.Equal(LoginOutcomeKind.TemporarilyUnavailable, (await Login(service, true)).Kind);
         Assert.Equal(LoginOutcomeKind.Allowed, (await Login(service, true, source: "client:ip_other")).Kind);
         Assert.Equal(LoginOutcomeKind.TemporarilyUnavailable, (await Login(service, true, admin: true, source: "client:ip_admin")).Kind);
         Assert.Contains(_log.Entries, e => e.Level == LogLevel.Error && e.Message.StartsWith("login_protection_store_failed"));
+    }
+
+    [Fact]
+    public async Task The_in_memory_fallback_window_is_fixed_and_reopens()
+    {
+        _store.Broken = true;
+        var service = Service();
+        for (var i = 0; i < 6; i++) await Login(service, false);
+        Assert.Equal(LoginOutcomeKind.TemporarilyUnavailable, (await Login(service, true)).Kind);
+
+        for (var m = 1; m <= 15; m++)
+        {
+            _clock.UtcNow = Start.AddMinutes(m);
+            await Login(service, false);
+        }
+        _clock.UtcNow = Start.AddMinutes(15).AddSeconds(1);
+        Assert.Equal(LoginOutcomeKind.Allowed, (await Login(service, true)).Kind);
+    }
+
+    [Fact]
+    public async Task One_users_notices_cannot_crowd_out_anothers()
+    {
+        var service = Service();
+        for (var i = 0; i < 8; i++) await Login(service, true, source: $"client:ip_{i}");
+        await Login(service, true, user: "victim", email: "kurban@ornek.com");
+
+        Assert.Equal(LoginProtectionService.NoticesPerUserPerHour, _mail.Sent.Count(m => m.To == Email && m.Template == LoginMailTemplates.NewDevice));
+        Assert.Contains(_mail.Sent, m => m.To == "kurban@ornek.com" && m.Template == LoginMailTemplates.NewDevice);
+        Assert.Contains(_log.Entries, e => e.Level == LogLevel.Error && e.Message.StartsWith("login_notice_dropped UserId=user-1"));
+    }
+
+    [Fact]
+    public async Task A_dropped_attack_notice_is_retried_on_the_next_crossing()
+    {
+        var service = Service();
+        _mail.Refuse = true;
+        for (var i = 0; i < 21; i++) await Login(service, false, source: $"client:ip_{i}");
+        _mail.Refuse = false;
+        await Login(service, false, source: "client:ip_more");
+
+        Assert.Single(_mail.Sent, m => m.Template == LoginMailTemplates.AttackNotice);
     }
 
     [Fact]
@@ -762,6 +806,22 @@ public class LoginProtectionServiceTests
     {
         Assert.All(Enumerable.Range(0, 100).Select(_ => LoginSecrets.NewCode()), c => Assert.Matches("^[0-9]{6}$", c));
         Assert.All(Enumerable.Range(0, 20).Select(_ => LoginSecrets.NewDeviceToken()), t => Assert.Matches("^[A-Za-z0-9_-]{43}$", t));
+    }
+}
+
+public class QueuedLoginMailerTests
+{
+    [Fact]
+    public async Task A_full_notice_queue_never_blocks_a_code()
+    {
+        var mailer = new QueuedLoginMailer(Microsoft.Extensions.Logging.Abstractions.NullLogger<QueuedLoginMailer>.Instance);
+        for (var i = 0; i < QueuedLoginMailer.NoticeCapacity; i++)
+            await mailer.SendAsync($"u{i}@ornek.com", LoginMailTemplates.NewDevice, new Dictionary<string, string>());
+
+        Assert.False(await mailer.SendAsync("x@ornek.com", LoginMailTemplates.NewDevice, new Dictionary<string, string>()));
+        Assert.True(await mailer.SendAsync("ali@ornek.com", LoginMailTemplates.Code, new Dictionary<string, string> { ["Code"] = "123456" }));
+        Assert.True(mailer.Codes.TryRead(out var first));
+        Assert.Equal(LoginMailTemplates.Code, first.TemplateKey);
     }
 }
 

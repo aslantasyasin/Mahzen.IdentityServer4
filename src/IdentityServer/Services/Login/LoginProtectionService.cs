@@ -16,6 +16,8 @@ public sealed class LoginProtectionService
     public const string StepUpFailuresScope = "step-up-failures";
     public const string AttackNoticeKind = "attack";
     public const string UnderAttackKind = "under-attack";
+    public const string NoticesScope = "notices";
+    public const int NoticesPerUserPerHour = 5;
     public const int CleanupBatchSize = 5000;
 
     private static readonly TimeSpan ChallengeSendWindow = TimeSpan.FromHours(1);
@@ -83,9 +85,10 @@ public sealed class LoginProtectionService
                 {
                     _logger.LogWarning("login_account_threshold_reached UserId={UserId} AccountAttempts={AccountAttempts} Mode={Mode}",
                         userId, accountAttempts, _options.Mode);
-                    if (Enforcing && !string.IsNullOrWhiteSpace(email))
-                        await _mailer.SendAsync(email, LoginMailTemplates.AttackNotice,
-                            new Dictionary<string, string> { ["At"] = TurkeyTime(now), ["Attempts"] = accountAttempts.ToString(CultureInfo.InvariantCulture) });
+                    if (Enforcing && !string.IsNullOrWhiteSpace(email) &&
+                        !await NotifyAsync(userId, email, LoginMailTemplates.AttackNotice,
+                            new Dictionary<string, string> { ["At"] = TurkeyTime(now), ["Attempts"] = accountAttempts.ToString(CultureInfo.InvariantCulture) }, now))
+                        await _store.MarkFlagAsync(userId, AttackNoticeKind, now - _options.AttackNoticeInterval - TimeSpan.FromSeconds(1));
                 }
             }
 
@@ -105,8 +108,9 @@ public sealed class LoginProtectionService
             _logger.LogError(ex, "login_protection_store_failed Step=enter UserId={UserId} Mode={Mode} falling back to in-memory limits", userId, _options.Mode);
             if (!Enforcing) return LoginGate.Open;
             if (isAdmin) return new LoginGate(LoginGateKind.Unavailable, "admin");
-            _fallback.RecordFailure(userId, source, _options.SourceWindow);
-            return _fallback.IsBlocked(userId, source, _options.SourceFailureLimit + 1) ? new LoginGate(LoginGateKind.Blocked, "fallback") : LoginGate.Open;
+            return _fallback.RecordAttempt(userId, source, _options.SourceWindow, now) > _options.SourceFailureLimit
+                ? new LoginGate(LoginGateKind.Unavailable, "fallback")
+                : LoginGate.Open;
         }
     }
 
@@ -141,7 +145,6 @@ public sealed class LoginProtectionService
 
     public async Task<LoginOutcome> CompleteAsync(LoginAttempt attempt, LoginGate gate, bool credentialsOk)
     {
-        if (gate.Kind == LoginGateKind.Blocked) return LoginOutcome.Rejected();
         if (gate.Kind == LoginGateKind.Unavailable) return LoginOutcome.TemporarilyUnavailable();
         if (_options.Mode == LoginProtectionMode.Off) return credentialsOk ? LoginOutcome.Allowed() : LoginOutcome.Rejected();
 
@@ -204,7 +207,7 @@ public sealed class LoginProtectionService
             return;
         }
         if (lastSentAt > now - _options.ChallengeResendCooldown) return;
-        if (await _store.IncrementAsync(userId, ChallengeSendsScope, WindowStart(now, ChallengeSendWindow)) > _options.ChallengeSendsPerHour)
+        if (await RecentSendsAsync(userId, now) >= _options.ChallengeSendsPerHour)
         {
             _logger.LogWarning("login_step_up_send_budget_exhausted UserId={UserId} Challenge={ChallengeId}", userId, challengeId);
             return;
@@ -213,8 +216,21 @@ public sealed class LoginProtectionService
         var code = LoginSecrets.NewCode();
         if (!await _store.TryRotateChallengeCodeAsync(challengeId, LoginSecrets.HashCode(challengeId, code), now, now - _options.ChallengeResendCooldown))
             return;
+        await _store.IncrementAsync(userId, ChallengeSendsScope, WindowStart(now, ChallengeSendWindow));
         var queued = await _mailer.SendAsync(email, LoginMailTemplates.Code, new Dictionary<string, string> { ["Code"] = code });
         _logger.LogInformation("login_step_up_code_sent UserId={UserId} Challenge={ChallengeId} Queued={Queued}", userId, challengeId, queued);
+    }
+
+    private Task<int> RecentSendsAsync(string userId, DateTimeOffset now) =>
+        _store.CountAsync(userId, ChallengeSendsScope, WindowStart(now, ChallengeSendWindow));
+
+    private async Task<bool> NotifyAsync(string userId, string email, string template, IReadOnlyDictionary<string, string> model, DateTimeOffset now)
+    {
+        var sentThisHour = await _store.IncrementAsync(userId, NoticesScope, WindowStart(now, TimeSpan.FromHours(1)));
+        var queued = sentThisHour <= NoticesPerUserPerHour && await _mailer.SendAsync(email, template, model);
+        if (queued) _logger.LogInformation("login_notice_sent UserId={UserId} Template={Template}", userId, template);
+        else _logger.LogError("login_notice_dropped UserId={UserId} Template={Template} SentThisHour={SentThisHour}", userId, template, sentThisHour);
+        return queued;
     }
 
     public Task RecordWrongCodeAsync(string userId) =>
@@ -279,7 +295,7 @@ public sealed class LoginProtectionService
         _logger.LogInformation("login_device_issued UserId={UserId} Source={Source}", attempt.UserId, attempt.Source);
 
         if (Enforcing && _options.NotifyNewDevice && !string.IsNullOrWhiteSpace(attempt.Email))
-            await _mailer.SendAsync(attempt.Email, LoginMailTemplates.NewDevice, new Dictionary<string, string> { ["At"] = TurkeyTime(now) });
+            await NotifyAsync(attempt.UserId, attempt.Email, LoginMailTemplates.NewDevice, new Dictionary<string, string> { ["At"] = TurkeyTime(now) }, now);
         return token;
     }
 

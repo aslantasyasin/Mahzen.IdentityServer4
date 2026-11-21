@@ -7,25 +7,23 @@ public sealed class LoginFallbackLimiter : IDisposable
 {
     public const int MaxEntries = 100_000;
 
+    private sealed record Entry(int Count, DateTimeOffset ExpiresAt);
+
     private readonly MemoryCache _cache = new(new MemoryCacheOptions { SizeLimit = MaxEntries });
     private readonly object _gate = new();
 
-    public void RecordFailure(string userId, string source, TimeSpan window)
+    public int RecordAttempt(string userId, string source, TimeSpan window, DateTimeOffset now)
     {
-        var key = Key(userId, source);
+        var key = userId + "|" + source;
         lock (_gate)
         {
-            var count = _cache.TryGetValue(key, out int current) ? current + 1 : 1;
-            _cache.Set(key, count, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = window });
+            var entry = _cache.TryGetValue(key, out Entry current) && current.ExpiresAt > now
+                ? current with { Count = current.Count + 1 }
+                : new Entry(1, now + window);
+            _cache.Set(key, entry, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = entry.ExpiresAt - now });
+            return entry.Count;
         }
     }
 
-    public bool IsBlocked(string userId, string source, int limit)
-    {
-        lock (_gate) return _cache.TryGetValue(Key(userId, source), out int count) && count >= limit;
-    }
-
     public void Dispose() => _cache.Dispose();
-
-    private static string Key(string userId, string source) => userId + "|" + source;
 }

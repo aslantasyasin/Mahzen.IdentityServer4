@@ -4,7 +4,6 @@ public enum LoginGateKind
 {
     Open,
     StepUp,
-    Blocked,
     Unavailable,
 }
 
