@@ -44,6 +44,9 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
         _logger = logger;
     }
 
+    public const string InvalidCredentialsDescription = "Geçersiz kullanıcı adı veya parola";
+    public const string TemporarilyUnavailableDescription = "temporarily_unavailable";
+
     public async Task ValidateAsync(ResourceOwnerPasswordValidationContext context)
     {
         var user = await _userManager.FindByNameAsync(context.UserName)
@@ -51,31 +54,10 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
 
         if (user == null)
         {
-            context.Result = new GrantValidationResult(TokenRequestErrors.InvalidGrant, "Geçersiz kullanıcı adı veya parola");
+            context.Result = new GrantValidationResult(TokenRequestErrors.InvalidGrant, InvalidCredentialsDescription);
             return;
         }
 
-        // 2) Parola doğrula (bu adım ROPC için zorunlu)
-        var source = LoginSource.Resolve(_httpContextAccessor.HttpContext, _configuration["Internal:ApiKey"]);
-        var raw = context.Request?.Raw;
-        var deviceId = await _loginProtection.FindTrustedDeviceAsync(user.Id, raw?[DeviceTokenParameter]);
-        var passwordOk = await _signInManager.CheckPasswordSignInAsync(user, context.Password, lockoutOnFailure: !_loginProtection.Enforcing);
-        if (passwordOk.IsLockedOut)
-        {
-            _logger.LogInformation("login_locked_out UserId={UserId} Source={Source}", user.Id, source);
-        }
-        if (!passwordOk.Succeeded)
-        {
-            await _loginProtection.RecordFailedPasswordAsync(user.Id, user.Email, source, deviceId, whileLockedOut: passwordOk.IsLockedOut);
-        }
-
-        if (!passwordOk.Succeeded)
-        {
-            context.Result = new GrantValidationResult(TokenRequestErrors.InvalidGrant, "Geçersiz kullanıcı adı veya parola");
-            return;
-        }
-
-        // 3) Sadece client kontrolü (asıl ihtiyacınız)
         var clientId = context.Request?.Client?.ClientId;
         if (string.IsNullOrWhiteSpace(clientId))
         {
@@ -83,30 +65,53 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
             return;
         }
 
-        var claims = await _userManager.GetClaimsAsync(user);
-        var userTypes = claims
-            .Where(c => c.Type == "user_type") // ihtiyaca göre "allowed_client" gibi daha doğru bir tipe taşıyın
+        var userTypes = (await _userManager.GetClaimsAsync(user))
+            .Where(c => c.Type == "user_type")
             .Select(c => c.Value)
             .ToHashSet();
+        var typeAllowed = IsClientAllowed(userTypes, context.Request.Client);
 
-        if (!IsClientAllowed(userTypes, context.Request.Client))
+        var source = LoginSource.Resolve(_httpContextAccessor.HttpContext, _configuration["Internal:ApiKey"]);
+        var raw = context.Request.Raw;
+        var deviceId = await _loginProtection.FindTrustedDeviceAsync(user.Id, raw?[DeviceTokenParameter]);
+        var gate = await _loginProtection.GetGateAsync(user.Id, source, deviceId, userTypes.Contains("Admin"));
+
+        bool passwordOk;
+        if (_loginProtection.Enforcing)
         {
-            _logger.LogWarning("login_rejected_user_type UserId={UserId} ClientId={ClientId} UserTypes={UserTypes}",
-                user.Id, clientId, string.Join(',', userTypes));
-            context.Result = new GrantValidationResult(TokenRequestErrors.InvalidGrant, "Bu istemci için yetkiniz yok");
-            return;
+            passwordOk = await _userManager.CheckPasswordAsync(user, context.Password);
+        }
+        else
+        {
+            var signIn = await _signInManager.CheckPasswordSignInAsync(user, context.Password, lockoutOnFailure: true);
+            if (signIn.IsLockedOut)
+                _logger.LogInformation("login_locked_out UserId={UserId} Source={Source}", user.Id, source);
+            passwordOk = signIn.Succeeded;
+            if (!passwordOk)
+                await _loginProtection.RecordFailedPasswordAsync(user.Id, user.Email, source, deviceId, whileLockedOut: signIn.IsLockedOut);
         }
 
-        var outcome = await _loginProtection.CompleteAsync(new LoginAttempt(
-            user.Id, user.Email, source, deviceId, userTypes.Contains("Admin"), raw?[StepUpIdParameter], raw?[StepUpCodeParameter]));
+        if (_loginProtection.Enforcing && !passwordOk)
+            await _loginProtection.RecordFailedPasswordAsync(user.Id, user.Email, source, deviceId);
+
+        if (passwordOk && !typeAllowed)
+            _logger.LogWarning("login_rejected_user_type UserId={UserId} ClientId={ClientId} UserTypes={UserTypes}",
+                user.Id, clientId, string.Join(',', userTypes));
+
+        var outcome = await _loginProtection.CompleteAsync(
+            new LoginAttempt(user.Id, user.Email, source, deviceId, userTypes.Contains("Admin"), raw?[StepUpIdParameter], raw?[StepUpCodeParameter]),
+            gate,
+            passwordOk && typeAllowed);
 
         context.Result = outcome.Kind switch
         {
+            LoginOutcomeKind.Allowed => new GrantValidationResult(subject: user.Id, authenticationMethod: "password",
+                customResponse: outcome.DeviceToken is null ? null : new Dictionary<string, object> { [DeviceTokenParameter] = outcome.DeviceToken }),
             LoginOutcomeKind.StepUpRequired => new GrantValidationResult(TokenRequestErrors.InvalidGrant, StepUpRequiredDescription,
                 new Dictionary<string, object> { [StepUpIdParameter] = outcome.ChallengeId!.Value.ToString() }),
             LoginOutcomeKind.StepUpFailed => new GrantValidationResult(TokenRequestErrors.InvalidGrant, StepUpFailedDescription),
-            _ => new GrantValidationResult(subject: user.Id, authenticationMethod: "password",
-                customResponse: outcome.DeviceToken is null ? null : new Dictionary<string, object> { [DeviceTokenParameter] = outcome.DeviceToken }),
+            LoginOutcomeKind.TemporarilyUnavailable => new GrantValidationResult(TokenRequestErrors.InvalidGrant, TemporarilyUnavailableDescription),
+            _ => new GrantValidationResult(TokenRequestErrors.InvalidGrant, InvalidCredentialsDescription),
         };
     }
 

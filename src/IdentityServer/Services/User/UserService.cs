@@ -592,6 +592,7 @@ namespace IdentityServer.Services.User
                 {
                     // Şifre değişikliğini logla (şifreleri kaydetme, sadece bilgi)
                     await _userChangeLogService.LogChangeAsync(userId, "Password", "***", "***", _userInfo.UserId);
+                    await _loginProtection.ResetUserAsync(userId, "password_change");
                     response.Data = true;
                 }
                 else

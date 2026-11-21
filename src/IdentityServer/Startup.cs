@@ -73,8 +73,12 @@ namespace IdentityServer
                 .ValidateOnStart();
             services.AddScoped<ILoginProtectionStore, LoginProtectionStore>();
             services.AddScoped<LoginProtectionService>();
+            services.AddSingleton<LoginFallbackLimiter>();
             services.Configure<LoginMailerOptions>(Configuration.GetSection(LoginMailerOptions.Section));
-            services.AddHttpClient<ILoginMailer, NotificationLoginMailer>();
+            services.AddHttpClient<NotificationLoginClient>();
+            services.AddSingleton<QueuedLoginMailer>();
+            services.AddSingleton<ILoginMailer>(sp => sp.GetRequiredService<QueuedLoginMailer>());
+            services.AddHostedService<LoginMailWorker>();
             services.AddHostedService<LoginProtectionCleanupWorker>();
 
             ///automapper
@@ -210,7 +214,8 @@ namespace IdentityServer
             foreach (var cidr in configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? Array.Empty<string>())
             {
                 var parts = cidr.Split('/');
-                if (parts.Length != 2 || !System.Net.IPAddress.TryParse(parts[0], out var address) || !int.TryParse(parts[1], out var prefix))
+                if (parts.Length != 2 || !System.Net.IPAddress.TryParse(parts[0], out var address) || !int.TryParse(parts[1], out var prefix) ||
+                    prefix < 0 || prefix > (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? 128 : 32))
                     throw new InvalidOperationException($"ForwardedHeaders:KnownNetworks içinde geçersiz CIDR: {cidr}");
                 yield return new Microsoft.AspNetCore.HttpOverrides.IPNetwork(address, prefix);
             }

@@ -30,6 +30,7 @@ namespace IdentityServerHost.Quickstart.UI
         private readonly IClientStore _clientStore;
         private readonly IAuthenticationSchemeProvider _schemeProvider;
         private readonly IEventService _events;
+        private readonly IdentityServer.Services.Login.LoginProtectionService _loginProtection;
 
         public AccountController(
             UserManager<ApplicationUser> userManager,
@@ -37,8 +38,10 @@ namespace IdentityServerHost.Quickstart.UI
             IIdentityServerInteractionService interaction,
             IClientStore clientStore,
             IAuthenticationSchemeProvider schemeProvider,
-            IEventService events)
+            IEventService events,
+            IdentityServer.Services.Login.LoginProtectionService loginProtection)
         {
+            _loginProtection = loginProtection;
             _userManager = userManager;
             _signInManager = signInManager;
             _interaction = interaction;
@@ -100,6 +103,12 @@ namespace IdentityServerHost.Quickstart.UI
                     // since we don't have a valid context, then we just go back to the home page
                     return Redirect("~/");
                 }
+            }
+
+            if (ModelState.IsValid && _loginProtection.Enforcing)
+            {
+                ModelState.AddModelError(string.Empty, "Bu giriş yöntemi kullanılmıyor.");
+                return View(await BuildLoginViewModelAsync(model));
             }
 
             if (ModelState.IsValid)

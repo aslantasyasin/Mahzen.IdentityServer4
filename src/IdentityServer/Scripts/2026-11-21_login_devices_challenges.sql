@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS ids4."LoginDevice" (
 );
 CREATE INDEX IF NOT EXISTS "IX_LoginDevice_UserId" ON ids4."LoginDevice" ("UserId");
 CREATE INDEX IF NOT EXISTS "IX_LoginDevice_ExpiresAt" ON ids4."LoginDevice" ("ExpiresAt");
+CREATE INDEX IF NOT EXISTS "IX_LoginDevice_RevokedAt" ON ids4."LoginDevice" ("RevokedAt") WHERE "RevokedAt" IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS ids4."LoginChallenge" (
     "Id"          uuid         NOT NULL,
@@ -34,7 +35,7 @@ CREATE TABLE IF NOT EXISTS ids4."LoginChallenge" (
     "MaxAttempts" integer      NOT NULL,
     "CreatedAt"   timestamptz  NOT NULL,
     "ExpiresAt"   timestamptz  NOT NULL,
-    "LastSentAt"  timestamptz  NOT NULL,
+    "LastSentAt"  timestamptz  NULL,
     "UsedAt"      timestamptz  NULL,
     CONSTRAINT "PK_LoginChallenge" PRIMARY KEY ("Id")
 );
@@ -55,13 +56,13 @@ SELECT tablename, indexname FROM pg_indexes
 WHERE schemaname = 'ids4' AND tablename IN ('LoginDevice', 'LoginChallenge', 'LoginNotice')
 ORDER BY tablename, indexname;
 -- Beklenen: LoginChallenge (IX_LoginChallenge_ExpiresAt, IX_LoginChallenge_Open, PK_LoginChallenge),
---           LoginDevice (IX_LoginDevice_ExpiresAt, IX_LoginDevice_UserId, PK_LoginDevice, UQ_LoginDevice_TokenHash),
+--           LoginDevice (IX_LoginDevice_ExpiresAt, IX_LoginDevice_RevokedAt, IX_LoginDevice_UserId, PK_LoginDevice, UQ_LoginDevice_TokenHash),
 --           LoginNotice (PK_LoginNotice)
 
 -- Uygulamanın koşullu yazımları; iz bırakmaz (ROLLBACK).
 BEGIN;
 INSERT INTO ids4."LoginChallenge" ("Id", "UserId", "CodeHash", "Attempts", "MaxAttempts", "CreatedAt", "ExpiresAt", "LastSentAt")
-VALUES ('00000000-0000-0000-0000-000000000001', '__dogrulama__', repeat('a', 64), 0, 1, now(), now() + interval '5 minutes', now());
+VALUES ('00000000-0000-0000-0000-000000000001', '__dogrulama__', repeat('a', 64), 0, 1, now(), now() + interval '5 minutes', NULL);
 UPDATE ids4."LoginChallenge" SET "Attempts" = "Attempts" + 1
 WHERE "Id" = '00000000-0000-0000-0000-000000000001' AND "UsedAt" IS NULL AND "ExpiresAt" > now() AND "Attempts" < "MaxAttempts";  -- UPDATE 1
 UPDATE ids4."LoginChallenge" SET "Attempts" = "Attempts" + 1

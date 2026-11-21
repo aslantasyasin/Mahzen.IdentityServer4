@@ -21,6 +21,10 @@ public sealed class LoginProtectionOptions
     public TimeSpan AttackNoticeInterval { get; set; } = TimeSpan.FromHours(24);
     public bool NotifyNewDevice { get; set; } = true;
     public TimeSpan CleanupInterval { get; set; } = TimeSpan.FromHours(1);
+    public TimeSpan UnderAttackDuration { get; set; } = TimeSpan.FromHours(24);
+    public int StepUpFailureLimit { get; set; } = 10;
+    public TimeSpan StepUpFailureWindow { get; set; } = TimeSpan.FromHours(1);
+    public int MaxDevicesPerUser { get; set; } = 10;
 
     public bool IsValid() =>
         Enum.IsDefined(Mode) &&
@@ -29,5 +33,6 @@ public sealed class LoginProtectionOptions
         SourceWindow > TimeSpan.Zero && AccountWindow > TimeSpan.Zero && DeviceWindow > TimeSpan.Zero &&
         DeviceLifetime > TimeSpan.Zero && ChallengeLifetime > TimeSpan.Zero &&
         ChallengeResendCooldown >= TimeSpan.Zero && AttackNoticeInterval > TimeSpan.Zero &&
-        CleanupInterval > TimeSpan.Zero;
+        CleanupInterval > TimeSpan.Zero && UnderAttackDuration > TimeSpan.Zero &&
+        StepUpFailureLimit > 0 && StepUpFailureWindow > TimeSpan.Zero && MaxDevicesPerUser > 0;
 }

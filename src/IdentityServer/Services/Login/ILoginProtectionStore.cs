@@ -17,6 +17,8 @@ public interface ILoginProtectionStore
 
     Task RevokeDeviceAsync(long deviceId, DateTimeOffset now, string reason);
 
+    Task RevokeExcessDevicesAsync(string userId, int keep, DateTimeOffset now);
+
     Task<LoginChallenge> FindOpenChallengeAsync(string userId, DateTimeOffset now);
 
     Task<LoginChallenge> GetChallengeAsync(Guid id);
@@ -30,6 +32,10 @@ public interface ILoginProtectionStore
     Task<bool> TryCompleteChallengeAsync(Guid id, DateTimeOffset now);
 
     Task<bool> TryClaimNoticeAsync(string userId, string kind, DateTimeOffset now, DateTimeOffset sentBefore);
+
+    Task MarkFlagAsync(string userId, string kind, DateTimeOffset now);
+
+    Task<DateTimeOffset?> GetFlagAsync(string userId, string kind);
 
     Task ResetUserAsync(string userId, DateTimeOffset now, string reason);
 

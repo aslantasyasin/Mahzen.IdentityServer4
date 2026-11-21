@@ -36,6 +36,9 @@ public class PasswordValidatorTests
     private sealed class FakeUserManager : UserManager<ApplicationUser>
     {
         public string[] UserTypes { get; set; } = { "B2C" };
+        public bool PasswordOk { get; set; } = true;
+
+        public override Task<bool> CheckPasswordAsync(ApplicationUser user, string password) => Task.FromResult(PasswordOk);
 
         public FakeUserManager() : base(new StubUserStore(), null!, null!, null!, null!, null!, null!, null!, null!) { }
 
@@ -77,7 +80,7 @@ public class PasswordValidatorTests
     private (CustomResourceOwnerPasswordValidator Validator, FakeSignInManager SignIn) Create(LoginProtectionMode mode)
     {
         var signIn = new FakeSignInManager(_users);
-        var protection = new LoginProtectionService(_store, _mail, Options.Create(new LoginProtectionOptions { Mode = mode }),
+        var protection = new LoginProtectionService(_store, _mail, new LoginFallbackLimiter(), Options.Create(new LoginProtectionOptions { Mode = mode }),
             NullLogger<LoginProtectionService>.Instance, new FixedClock());
         var http = new HttpContextAccessor { HttpContext = new DefaultHttpContext { Connection = { RemoteIpAddress = System.Net.IPAddress.Parse("10.0.0.7") } } };
         var validator = new CustomResourceOwnerPasswordValidator(signIn, _users, protection, http,
@@ -105,19 +108,30 @@ public class PasswordValidatorTests
         };
     }
 
-    [Theory]
-    [InlineData(LoginProtectionMode.Shadow, true)]
-    [InlineData(LoginProtectionMode.Enforce, false)]
-    public async Task Identity_lockout_is_only_turned_off_when_enforcing(LoginProtectionMode mode, bool lockout)
+    [Fact]
+    public async Task Shadow_checks_the_password_through_identity_with_lockout()
     {
-        var (validator, signIn) = Create(mode);
+        var (validator, signIn) = Create(LoginProtectionMode.Shadow);
         await validator.ValidateAsync(Context());
 
-        Assert.Equal(lockout, signIn.LockoutOnFailure);
+        Assert.True(signIn.LockoutOnFailure);
     }
 
     [Fact]
-    public async Task A_locked_out_attempt_is_rejected_and_counted()
+    public async Task Enforce_never_consults_the_identity_lockout()
+    {
+        var (validator, signIn) = Create(LoginProtectionMode.Enforce);
+        signIn.Result = SignInResult.LockedOut;
+        var context = Context();
+
+        await validator.ValidateAsync(context);
+
+        Assert.Null(signIn.LockoutOnFailure);
+        Assert.False(context.Result.IsError);
+    }
+
+    [Fact]
+    public async Task A_locked_out_attempt_in_shadow_is_rejected_and_counted()
     {
         var (validator, signIn) = Create(LoginProtectionMode.Shadow);
         signIn.Result = SignInResult.LockedOut;
@@ -159,41 +173,39 @@ public class PasswordValidatorTests
     }
 
     [Fact]
-    public async Task Step_up_is_returned_as_invalid_grant_with_a_challenge_id_and_completes_with_the_code()
+    public async Task Under_the_gate_wrong_and_right_passwords_look_the_same_and_the_code_completes_the_login()
     {
-        var (validator, signIn) = Create(LoginProtectionMode.Enforce);
-        signIn.Result = SignInResult.Failed;
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
+        _users.PasswordOk = false;
         for (var i = 0; i < 5; i++) await validator.ValidateAsync(Context());
-        signIn.Result = SignInResult.Success;
 
-        var context = Context();
-        await validator.ValidateAsync(context);
+        var wrong = Context();
+        await validator.ValidateAsync(wrong);
+        _users.PasswordOk = true;
+        var right = Context();
+        await validator.ValidateAsync(right);
 
-        Assert.True(context.Result.IsError);
-        Assert.Equal("invalid_grant", context.Result.Error);
-        Assert.Equal(CustomResourceOwnerPasswordValidator.StepUpRequiredDescription, context.Result.ErrorDescription);
-        var challengeId = (string)context.Result.CustomResponse[CustomResourceOwnerPasswordValidator.StepUpIdParameter];
+        Assert.Equal(CustomResourceOwnerPasswordValidator.StepUpRequiredDescription, right.Result.ErrorDescription);
+        Assert.Equal(wrong.Result.ErrorDescription, right.Result.ErrorDescription);
+        Assert.Equal(wrong.Result.CustomResponse[CustomResourceOwnerPasswordValidator.StepUpIdParameter],
+            right.Result.CustomResponse[CustomResourceOwnerPasswordValidator.StepUpIdParameter]);
 
-        var verify = Context((CustomResourceOwnerPasswordValidator.StepUpIdParameter, challengeId),
+        var verify = Context((CustomResourceOwnerPasswordValidator.StepUpIdParameter, (string)right.Result.CustomResponse[CustomResourceOwnerPasswordValidator.StepUpIdParameter]),
             (CustomResourceOwnerPasswordValidator.StepUpCodeParameter, _mail.LastCode));
         await validator.ValidateAsync(verify);
         Assert.False(verify.Result.IsError);
     }
 
     [Fact]
-    public async Task A_rejected_user_type_never_triggers_a_code_or_a_device()
+    public async Task A_rejected_user_type_looks_like_a_wrong_password_and_never_triggers_a_code_or_a_device()
     {
         _users.UserTypes = new[] { "Default" };
-        var (validator, signIn) = Create(LoginProtectionMode.Enforce);
-        signIn.Result = SignInResult.Failed;
-        for (var i = 0; i < 5; i++) await validator.ValidateAsync(Context());
-        signIn.Result = SignInResult.Success;
-
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
         var context = Context();
+
         await validator.ValidateAsync(context);
 
-        Assert.True(context.Result.IsError);
-        Assert.Null(context.Result.CustomResponse);
+        Assert.Equal(CustomResourceOwnerPasswordValidator.InvalidCredentialsDescription, context.Result.ErrorDescription);
         Assert.Empty(_mail.Sent);
         Assert.Empty(_store.Devices);
     }

@@ -10,16 +10,16 @@ using Microsoft.Extensions.Options;
 
 namespace IdentityServer.Services.Login;
 
-public sealed class NotificationLoginMailer : ILoginMailer
+public sealed class NotificationLoginClient
 {
     public const string SendPath = "/api/email/send-internal";
 
     private readonly HttpClient _http;
     private readonly LoginMailerOptions _options;
     private readonly IConfiguration _configuration;
-    private readonly ILogger<NotificationLoginMailer> _logger;
+    private readonly ILogger<NotificationLoginClient> _logger;
 
-    public NotificationLoginMailer(HttpClient http, IOptions<LoginMailerOptions> options, IConfiguration configuration, ILogger<NotificationLoginMailer> logger)
+    public NotificationLoginClient(HttpClient http, IOptions<LoginMailerOptions> options, IConfiguration configuration, ILogger<NotificationLoginClient> logger)
     {
         _http = http;
         _options = options.Value;

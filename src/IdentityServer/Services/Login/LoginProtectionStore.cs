@@ -37,6 +37,21 @@ WHERE ""Id"" = @id AND ""RevokedAt"" IS NULL;";
 UPDATE ids4.""LoginDevice"" SET ""RevokedAt"" = @now, ""RevokeReason"" = @reason
 WHERE ""Id"" = @id AND ""RevokedAt"" IS NULL;";
 
+    private const string RevokeExcessDevicesSql = @"
+UPDATE ids4.""LoginDevice"" SET ""RevokedAt"" = @now, ""RevokeReason"" = 'limit'
+WHERE ""Id"" IN (
+    SELECT ""Id"" FROM ids4.""LoginDevice""
+    WHERE ""UserId"" = @userId AND ""RevokedAt"" IS NULL
+    ORDER BY ""LastUsedAt"" DESC, ""Id"" DESC
+    OFFSET @keep);";
+
+    private const string MarkFlagSql = @"
+INSERT INTO ids4.""LoginNotice"" (""UserId"", ""Kind"", ""SentAt"") VALUES (@userId, @kind, @now)
+ON CONFLICT (""UserId"", ""Kind"") DO UPDATE SET ""SentAt"" = @now;";
+
+    private const string GetFlagSql = @"
+SELECT ""SentAt"" FROM ids4.""LoginNotice"" WHERE ""UserId"" = @userId AND ""Kind"" = @kind;";
+
     private const string ChallengeColumns = @"""Id"", ""UserId"", ""CodeHash"", ""ExpiresAt"", ""LastSentAt"", ""UsedAt"" IS NOT NULL";
 
     private const string FindOpenChallengeSql = @"
@@ -49,11 +64,11 @@ SELECT " + ChallengeColumns + @" FROM ids4.""LoginChallenge"" WHERE ""Id"" = @id
 
     private const string CreateChallengeSql = @"
 INSERT INTO ids4.""LoginChallenge"" (""Id"", ""UserId"", ""CodeHash"", ""Attempts"", ""MaxAttempts"", ""CreatedAt"", ""ExpiresAt"", ""LastSentAt"")
-VALUES (@id, @userId, @codeHash, 0, @maxAttempts, @now, @expiresAt, @now);";
+VALUES (@id, @userId, @codeHash, 0, @maxAttempts, @now, @expiresAt, NULL);";
 
     private const string RotateChallengeSql = @"
 UPDATE ids4.""LoginChallenge"" SET ""CodeHash"" = @codeHash, ""LastSentAt"" = @now
-WHERE ""Id"" = @id AND ""UsedAt"" IS NULL AND ""ExpiresAt"" > @now AND ""LastSentAt"" <= @sentBefore;";
+WHERE ""Id"" = @id AND ""UsedAt"" IS NULL AND ""ExpiresAt"" > @now AND (""LastSentAt"" IS NULL OR ""LastSentAt"" <= @sentBefore);";
 
     private const string ConsumeAttemptSql = @"
 UPDATE ids4.""LoginChallenge"" SET ""Attempts"" = ""Attempts"" + 1
@@ -105,6 +120,17 @@ UPDATE ids4.""LoginChallenge"" SET ""UsedAt"" = @now WHERE ""UserId"" = @userId 
 
     public Task RevokeDeviceAsync(long deviceId, DateTimeOffset now, string reason) =>
         ExecuteAsync(RevokeDeviceSql, ("id", deviceId), ("now", Utc(now)), ("reason", reason));
+
+    public Task RevokeExcessDevicesAsync(string userId, int keep, DateTimeOffset now) =>
+        ExecuteAsync(RevokeExcessDevicesSql, ("userId", userId), ("keep", keep), ("now", Utc(now)));
+
+    public Task MarkFlagAsync(string userId, string kind, DateTimeOffset now) =>
+        ExecuteAsync(MarkFlagSql, ("userId", userId), ("kind", kind), ("now", Utc(now)));
+
+    public async Task<DateTimeOffset?> GetFlagAsync(string userId, string kind) =>
+        await ScalarAsync(GetFlagSql, ("userId", userId), ("kind", kind)) is DateTime value
+            ? new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc))
+            : null;
 
     public Task<LoginChallenge> FindOpenChallengeAsync(string userId, DateTimeOffset now) =>
         ReadChallengeAsync(FindOpenChallengeSql, ("userId", userId), ("now", Utc(now)));
@@ -164,7 +190,7 @@ UPDATE ids4.""LoginChallenge"" SET ""UsedAt"" = @now WHERE ""UserId"" = @userId 
             reader.GetString(1),
             reader.GetString(2),
             new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(3), DateTimeKind.Utc)),
-            new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(4), DateTimeKind.Utc)),
+            reader.IsDBNull(4) ? null : new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(4), DateTimeKind.Utc)),
             reader.GetBoolean(5));
     }
 
