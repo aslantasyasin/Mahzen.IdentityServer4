@@ -13,7 +13,7 @@ using Microsoft.Extensions.Options;
 
 namespace IdentityServer.Tests;
 
-public class UpdateEmailTests
+public class PasswordProtectedChangesTests
 {
     private const string UserId = "user-1";
     private const string Password = "DogruSifre1!";
@@ -39,12 +39,24 @@ public class UpdateEmailTests
     {
         public readonly ApplicationUser Customer = new() { Id = UserId, UserName = "ali@ornek.com", Email = "ali@ornek.com", IsActive = true };
         public int EmailChanges;
+        public int PasswordChecks;
         public bool FailToSave;
 
         public Users() : base(new NoStore(), null!, null!, null!, null!, null!, null!, null!, null!) { }
 
         public override Task<ApplicationUser> FindByIdAsync(string userId) => Task.FromResult(userId == UserId ? Customer : null!);
-        public override Task<bool> CheckPasswordAsync(ApplicationUser user, string password) => Task.FromResult(password == Password);
+        public override Task<bool> CheckPasswordAsync(ApplicationUser user, string password)
+        {
+            Interlocked.Increment(ref PasswordChecks);
+            return Task.FromResult(password == Password);
+        }
+        public override Task<IdentityResult> ChangePasswordAsync(ApplicationUser user, string currentPassword, string newPassword)
+        {
+            Interlocked.Increment(ref PasswordChecks);
+            return Task.FromResult(currentPassword == Password
+                ? IdentityResult.Success
+                : IdentityResult.Failed(new IdentityError { Code = "PasswordMismatch" }));
+        }
         public override Task<ApplicationUser> FindByEmailAsync(string email) =>
             Task.FromResult(email == TakenEmail ? new ApplicationUser { Id = "user-2", Email = TakenEmail } : null!);
         public override Task<string> GenerateChangeEmailTokenAsync(ApplicationUser user, string newEmail) => Task.FromResult("token");
@@ -75,21 +87,23 @@ public class UpdateEmailTests
         }
     }
 
-    private sealed class FixedClock : ISystemClock
+    private sealed class Clock : ISystemClock
     {
-        public DateTimeOffset UtcNow => new(2026, 11, 22, 10, 0, 0, TimeSpan.Zero);
+        public DateTimeOffset UtcNow { get; set; } = new(2026, 11, 22, 10, 0, 0, TimeSpan.Zero);
     }
+
+    private readonly Clock _clock = new();
 
     private readonly Users _users = new();
     private readonly Mailer _mailer = new();
     private readonly LoginProtectionServiceTests.MemoryStore _store = new();
     private readonly LoginProtectionService _protection;
 
-    public UpdateEmailTests()
+    public PasswordProtectedChangesTests()
     {
         var work = new LoginProtectionServiceTests.ImmediateWork();
         _protection = new LoginProtectionService(_store, new LoginProtectionServiceTests.RecordingMailer(), work, new LoginFallbackLimiter(),
-            Options.Create(new LoginProtectionOptions { Mode = LoginProtectionMode.Shadow }), NullLogger<LoginProtectionService>.Instance, new FixedClock());
+            Options.Create(new LoginProtectionOptions { Mode = LoginProtectionMode.Shadow }), NullLogger<LoginProtectionService>.Instance, _clock);
         work.Service = _protection;
     }
 
@@ -160,7 +174,71 @@ public class UpdateEmailTests
         Assert.DoesNotContain("PasswordMismatch", result.Errors);
         Assert.Equal(0, _users.EmailChanges);
         Assert.Empty(_mailer.Sent);
-        Assert.Empty(_store.Counts);
+        Assert.DoesNotContain(_store.Counts.Keys, k => k.Scope == LoginProtectionService.EmailChangesScope);
+    }
+
+    private Task<IdentityServer.Models.Base.ApiResponse<bool>> ChangePassword(string current) =>
+        Service().ChangePasswordAsync(UserId, current, "YeniSifre1!");
+
+    [Fact]
+    public async Task After_five_password_checks_even_the_right_password_is_refused_without_checking()
+    {
+        for (var i = 0; i < LoginProtectionService.PasswordChecksPerHour; i++)
+            Assert.Contains("PasswordMismatch", (await ChangePassword("YanlisSifre1!")).Errors);
+
+        var email = await Service().UpdateEmailAsync(new UpdateEmailRequestDto { Email = NewEmail, CurrentPassword = Password });
+        var password = await ChangePassword(Password);
+
+        Assert.True(email.HasError);
+        Assert.True(password.HasError);
+        Assert.Equal(new[] { "TooManyPasswordChecks" }, email.Errors);
+        Assert.Equal(new[] { "TooManyPasswordChecks" }, password.Errors);
+        Assert.Equal(LoginProtectionService.PasswordChecksPerHour, _users.PasswordChecks);
+        Assert.Equal("ali@ornek.com", _users.Customer.Email);
+        Assert.Empty(_mailer.Sent);
+    }
+
+    [Fact]
+    public async Task Email_and_password_changes_share_the_limit()
+    {
+        for (var i = 0; i < LoginProtectionService.PasswordChecksPerHour; i++)
+            await Service().UpdateEmailAsync(new UpdateEmailRequestDto { Email = NewEmail, CurrentPassword = "YanlisSifre1!" });
+
+        Assert.True((await ChangePassword(Password)).HasError);
+        Assert.Equal(LoginProtectionService.PasswordChecksPerHour, _users.PasswordChecks);
+    }
+
+    [Fact]
+    public async Task The_limit_does_not_reset_at_the_top_of_the_hour()
+    {
+        _clock.UtcNow = new DateTimeOffset(2026, 11, 22, 10, 59, 0, TimeSpan.Zero);
+        for (var i = 0; i < LoginProtectionService.PasswordChecksPerHour; i++)
+            await ChangePassword("YanlisSifre1!");
+
+        _clock.UtcNow = new DateTimeOffset(2026, 11, 22, 11, 1, 0, TimeSpan.Zero);
+
+        Assert.True((await ChangePassword(Password)).HasError);
+        Assert.Equal(LoginProtectionService.PasswordChecksPerHour, _users.PasswordChecks);
+    }
+
+    [Fact]
+    public async Task A_password_reset_lifts_the_limit()
+    {
+        for (var i = 0; i < LoginProtectionService.PasswordChecksPerHour; i++)
+            await ChangePassword("YanlisSifre1!");
+
+        await _protection.ResetUserAsync(UserId, "password_reset");
+
+        Assert.False((await ChangePassword(Password)).HasError);
+    }
+
+    [Fact]
+    public async Task Concurrent_checks_never_exceed_the_limit()
+    {
+        var attempts = Enumerable.Range(0, 20).Select(_ => ChangePassword("YanlisSifre1!"));
+        await Task.WhenAll(attempts);
+
+        Assert.Equal(LoginProtectionService.PasswordChecksPerHour, _users.PasswordChecks);
     }
 
     [Fact]

@@ -27,6 +27,7 @@ namespace IdentityServer.Services.User
     public class UserService : IUserService
     {
         private const string PasswordMismatchCode = "PasswordMismatch";
+        private const string TooManyPasswordChecks = "TooManyPasswordChecks";
 
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<ApplicationRole> _roleManager;
@@ -590,6 +591,12 @@ namespace IdentityServer.Services.User
                     return ApiResponse<bool>.Fail("Mevcut şifreyi giriniz.");
                 }
 
+                if (!await _loginProtection.TryClaimPasswordCheckAsync(userId))
+                {
+                    _logger.LogWarning("password_check_limited UserId={UserId} Action=change_password", userId);
+                    return ApiResponse<bool>.Fail(TooManyPasswordChecks);
+                }
+
                 IdentityResult result = await _userManager.ChangePasswordAsync(user, currentPassword, newPassword);
 
                 if (result.Succeeded)
@@ -838,7 +845,18 @@ namespace IdentityServer.Services.User
                 return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
             }
 
-            if (string.IsNullOrEmpty(model.CurrentPassword) || !await _userManager.CheckPasswordAsync(user, model.CurrentPassword))
+            if (string.IsNullOrEmpty(model.CurrentPassword))
+            {
+                return ApiResponse<bool>.Fail(PasswordMismatchCode);
+            }
+
+            if (!await _loginProtection.TryClaimPasswordCheckAsync(userId))
+            {
+                _logger.LogWarning("password_check_limited UserId={UserId} Action=update_email", userId);
+                return ApiResponse<bool>.Fail(TooManyPasswordChecks);
+            }
+
+            if (!await _userManager.CheckPasswordAsync(user, model.CurrentPassword))
             {
                 _logger.LogWarning("update_email_password_mismatch UserId={UserId}", userId);
                 return ApiResponse<bool>.Fail(PasswordMismatchCode);

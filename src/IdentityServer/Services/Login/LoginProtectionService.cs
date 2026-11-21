@@ -19,11 +19,14 @@ public sealed class LoginProtectionService
     public const string NoticesScope = "notices";
     public const string EmailChangesScope = "email-changes";
     public const int EmailChangesPerHour = 3;
+    public const string PasswordChecksScope = "password-checks";
+    public const int PasswordChecksPerHour = 5;
     public const int NoticesPerUserPerHour = 5;
     public const int CleanupBatchSize = 5000;
 
     private static readonly TimeSpan ChallengeSendWindow = TimeSpan.FromHours(1);
     private static readonly TimeSpan EmailChangeWindow = TimeSpan.FromHours(1);
+    private static readonly TimeSpan PasswordCheckWindow = TimeSpan.FromHours(1);
     private static readonly TimeSpan TurkeyUtcOffset = TimeSpan.FromHours(3);
 
     private readonly ILoginProtectionStore _store;
@@ -197,10 +200,18 @@ public sealed class LoginProtectionService
     public async Task<bool> TryClaimEmailChangeAsync(string userId) =>
         await _store.IncrementAsync(userId, EmailChangesScope, WindowStart(_clock.UtcNow, EmailChangeWindow)) <= EmailChangesPerHour;
 
+    public async Task<bool> TryClaimPasswordCheckAsync(string userId)
+    {
+        var window = WindowStart(_clock.UtcNow, PasswordCheckWindow);
+        var current = await _store.IncrementAsync(userId, PasswordChecksScope, window);
+        var previous = await _store.CountAsync(userId, PasswordChecksScope, window - PasswordCheckWindow);
+        return current + previous <= PasswordChecksPerHour;
+    }
+
     public Task<int> CleanupAsync()
     {
         var now = _clock.UtcNow;
-        var longestWindow = new[] { _options.SourceWindow, _options.AccountWindow, _options.DeviceWindow, _options.StepUpFailureWindow, ChallengeSendWindow, EmailChangeWindow }.Max();
+        var longestWindow = new[] { _options.SourceWindow, _options.AccountWindow, _options.DeviceWindow, _options.StepUpFailureWindow, ChallengeSendWindow, EmailChangeWindow, PasswordCheckWindow }.Max();
         return _store.CleanupAsync(now, WindowStart(now, longestWindow) - longestWindow, CleanupBatchSize);
     }
 
