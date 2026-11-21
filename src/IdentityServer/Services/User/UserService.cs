@@ -619,7 +619,7 @@ namespace IdentityServer.Services.User
         // posta kutusuna gidip geri girilmesi, e-posta doğrulamanın kanıtladığı
         // şeyin aynısını kanıtlıyor. (Onay bayrağı, sıfırlama tamamlandığında
         // ResetPasswordByServiceAsync içinde zaten true'ya çekiliyor.)
-        public async Task<ApiResponse<PasswordResetLookupResponseDto>> LookupForPasswordResetAsync(string email)
+        public async Task<ApiResponse<PasswordResetLookupResponseDto>> LookupForPasswordResetAsync(string email, string deviceToken)
         {
             try
             {
@@ -652,11 +652,14 @@ namespace IdentityServer.Services.User
                         new PasswordResetLookupResponseDto { Status = PasswordResetLookupResponseDto.StatusInactive });
                 }
 
-                _logger.LogInformation("PasswordResetLookup: uygun. UserId={UserId}", user.Id);
+                var deviceTrusted = await _loginProtection.FindTrustedDeviceAsync(user.Id, deviceToken) is not null;
+
+                _logger.LogInformation("PasswordResetLookup: uygun. UserId={UserId} DeviceTrusted={DeviceTrusted}", user.Id, deviceTrusted);
                 return ApiResponse<PasswordResetLookupResponseDto>.Success(new PasswordResetLookupResponseDto
                 {
                     Status = PasswordResetLookupResponseDto.StatusOk,
-                    UserId = user.Id
+                    UserId = user.Id,
+                    DeviceTrusted = deviceTrusted
                 });
             }
             catch (Exception ex)

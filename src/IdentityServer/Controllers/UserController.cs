@@ -115,7 +115,7 @@ namespace IdentityServer.Controllers
         [InternalCallerOnly(Required = true)]
         public async Task<IActionResult> LookupForPasswordReset([FromBody] PasswordResetLookupRequestDto model)
         {
-            var result = await _userService.LookupForPasswordResetAsync(model.Email);
+            var result = await _userService.LookupForPasswordResetAsync(model.Email, model.DeviceToken);
 
             if (result.HasError)
                 return BadRequest(result);

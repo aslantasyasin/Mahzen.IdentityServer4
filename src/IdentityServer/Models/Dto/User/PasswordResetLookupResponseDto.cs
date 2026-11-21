@@ -21,5 +21,7 @@ namespace IdentityServer.Models.Dto.User
 
         // Yalnızca Status == StatusOk iken doludur.
         public string UserId { get; set; }
+
+        public bool DeviceTrusted { get; set; }
     }
 }
