@@ -774,6 +774,19 @@ public class LoginProtectionServiceTests
     }
 
     [Fact]
+    public async Task A_full_queue_returns_the_attack_notice_slot_until_the_user_cap_holds_it()
+    {
+        var service = Service();
+        _mail.Refuse = true;
+        for (var i = 0; i < 31; i++) await Login(service, false, source: $"client:ip_{i}");
+
+        Assert.Equal(LoginProtectionService.NoticesPerUserPerHour,
+            _log.Entries.Count(e => e.Level == LogLevel.Error && e.Message.StartsWith("login_notice_dropped") && e.Message.Contains("Reason=queue_full")));
+        Assert.Single(_log.Entries, e => e.Level == LogLevel.Warning && e.Message.StartsWith("login_notice_dropped") && e.Message.Contains("Reason=user_cap"));
+        Assert.Equal(LoginProtectionService.NoticesPerUserPerHour + 1, _log.Entries.Count(e => e.Message.Contains("login_account_threshold_reached")));
+    }
+
+    [Fact]
     public async Task A_capped_attack_notice_is_not_retried_on_every_attempt()
     {
         var service = Service();
