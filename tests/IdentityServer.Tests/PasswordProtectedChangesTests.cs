@@ -19,6 +19,7 @@ public class PasswordProtectedChangesTests
     private const string Password = "DogruSifre1!";
     private const string TakenEmail = "dolu@ornek.com";
     private const string NewEmail = "yeni@ornek.com";
+    private const string InternalDetail = "Npgsql: 23505 duplicate key value violates unique constraint \"UserNameIndex\"";
 
     private sealed class NoStore : IUserStore<ApplicationUser>
     {
@@ -53,6 +54,7 @@ public class PasswordProtectedChangesTests
         public override Task<IdentityResult> ChangePasswordAsync(ApplicationUser user, string currentPassword, string newPassword)
         {
             Interlocked.Increment(ref PasswordChecks);
+            if (FailToSave) throw new InvalidOperationException(InternalDetail);
             return Task.FromResult(currentPassword == Password
                 ? IdentityResult.Success
                 : IdentityResult.Failed(new IdentityError { Code = "PasswordMismatch" }));
@@ -67,7 +69,18 @@ public class PasswordProtectedChangesTests
             return Task.FromResult(IdentityResult.Success);
         }
         public override Task<IdentityResult> UpdateAsync(ApplicationUser user) =>
-            FailToSave ? throw new InvalidOperationException("db") : Task.FromResult(IdentityResult.Success);
+            FailToSave ? throw new InvalidOperationException(InternalDetail) : Task.FromResult(IdentityResult.Success);
+    }
+
+    internal sealed class RecordingLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+    {
+        public readonly List<Exception?> Errors = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Error) Errors.Add(exception);
+        }
     }
 
     private sealed class NoChangeLog : IUserChangeLogService
@@ -96,6 +109,7 @@ public class PasswordProtectedChangesTests
 
     private readonly Users _users = new();
     private readonly Mailer _mailer = new();
+    private readonly RecordingLogger<UserService> _log = new();
     private readonly LoginProtectionServiceTests.MemoryStore _store = new();
     private readonly LoginProtectionService _protection;
 
@@ -120,7 +134,7 @@ public class PasswordProtectedChangesTests
             .BuildServiceProvider()
             .GetRequiredService<IServiceScopeFactory>();
         return new UserService(_users, null!, scopes, null!, null!, null!, new NoChangeLog(), null!,
-            NullLogger<UserService>.Instance, null!, _protection, _mailer);
+            _log, null!, _protection, _mailer);
     }
 
     [Fact]
@@ -248,8 +262,20 @@ public class PasswordProtectedChangesTests
 
         var result = await Service().UpdateEmailAsync(new UpdateEmailRequestDto { Email = NewEmail, CurrentPassword = Password });
 
-        Assert.True(result.HasError);
+        Assert.Equal(new[] { IdentityServer.Models.Base.ApiErrors.Unexpected }, result.Errors);
+        Assert.Contains(_log.Errors, ex => ex?.Message == InternalDetail);
         Assert.Empty(_mailer.Sent);
+    }
+
+    [Fact]
+    public async Task A_password_change_that_fails_hides_the_database_error()
+    {
+        _users.FailToSave = true;
+
+        var result = await ChangePassword(Password);
+
+        Assert.Equal(new[] { IdentityServer.Models.Base.ApiErrors.Unexpected }, result.Errors);
+        Assert.Contains(_log.Errors, ex => ex?.Message == InternalDetail);
     }
 
     [Fact]

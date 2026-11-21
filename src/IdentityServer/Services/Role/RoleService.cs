@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using AutoMapper;
 using IdentityServer.Models;
 using IdentityServer.Models.Base;
+using Microsoft.Extensions.Logging;
 using IdentityServer.Models.Custom;
 using IdentityServer.Models.Dto.Role;
 using IdentityServer.Repositories;
@@ -19,12 +20,14 @@ namespace IdentityServer.Services.Role
     public class RoleService : IRoleService
     {
         private readonly RoleManager<ApplicationRole> _roleManager;
+        private readonly ILogger<RoleService> _logger;
         private readonly IMapper _mapper;
         private readonly ICustomRepository _customRepository;
         private readonly UserInfo _userInfo;
 
-        public RoleService(RoleManager<ApplicationRole> roleManager, IMapper mapper, ICustomRepository customRepository, IServiceScopeFactory serviceScopeFactory)
+        public RoleService(RoleManager<ApplicationRole> roleManager, IMapper mapper, ICustomRepository customRepository, IServiceScopeFactory serviceScopeFactory, ILogger<RoleService> logger)
         {
+            _logger = logger;
             _roleManager = roleManager;
             _mapper = mapper;
             _customRepository = customRepository;
@@ -51,7 +54,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation}", nameof(CreateRoleAsync));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -68,7 +72,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation}", nameof(GetRolesAsync));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -85,7 +90,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation} RoleId={RoleId}", nameof(RemoveRoleAsync), id);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -105,7 +111,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation}", nameof(UpdateRoleAsync));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -129,7 +136,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation}", nameof(CreateRoleClaimAsync));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -157,7 +165,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation}", nameof(UpdateRoleClaimAsync));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -181,7 +190,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation}", nameof(RemoveRoleClaimAsync));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -210,7 +220,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation} RoleId={RoleId}", nameof(GetRoleClaimsAsync), roleId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -227,7 +238,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation}", nameof(GetRoleClaimTypesAsync));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -244,7 +256,8 @@ namespace IdentityServer.Services.Role
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "role_operation_failed Operation={Operation}", nameof(GetRoleClaimValuesAsync));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }

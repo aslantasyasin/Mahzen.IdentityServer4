@@ -71,12 +71,6 @@ namespace IdentityServer.Services.User
         // SHA-256 hex özeti uzunluğu. Onay kaydındaki ContentHash bu biçimde olmalı.
         private const int ContentHashLength = 64;
 
-        // Beklenmeyen hatalarda istemciye dönen genel mesaj. NEDEN ex.Message dönülmüyor:
-        // bu metotları çağıran uçlar [AllowAnonymous] ve gateway üzerinden dışarı açık;
-        // Postgres/Identity hata metinleri şema, kolon ve altyapı bilgisi sızdırır (md. 9).
-        // Ayrıntı log'a yazılır, istemciye gitmez.
-        private const string UnexpectedErrorMessage = "İşlem tamamlanamadı, lütfen tekrar deneyin.";
-
         // Kabul edilebilir onay dizisi üst sınırı. Zorunlu doküman sayısı bugün 2;
         // sınır, ileride doküman eklenirse kodu değiştirmeye gerek kalmasın diye
         // biraz yüksek tutuldu. NEDEN gerekli: gövde deserialize edildikten sonra
@@ -245,7 +239,7 @@ namespace IdentityServer.Services.User
                 // için tek iz burasıdır. E-posta PII olduğu için loglanmıyor.
                 _logger.LogError(ex, "Kullanıcı kaydı beklenmeyen hata ile başarısız oldu. TenantId={TenantId}",
                     userRequestDto?.TenantId);
-                return ApiResponse<string>.Fail(UnexpectedErrorMessage);
+                return ApiResponse<string>.Fail(ApiErrors.Unexpected);
             }
         }
         
@@ -321,7 +315,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                return ApiResponse<string>.Fail(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation}", nameof(CreateUserByB2bAsync));
+                return ApiResponse<string>.Fail(ApiErrors.Unexpected);
             }
         }
         
@@ -353,7 +348,7 @@ namespace IdentityServer.Services.User
             catch (Exception ex)
             {
                 _logger.LogError(ex, "E-posta doğrulama beklenmeyen hata ile başarısız oldu. UserId={UserId}", userId);
-                response.Errors.Add(UnexpectedErrorMessage);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -371,7 +366,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(DeleteUserAsync), userId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -385,7 +381,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation}", nameof(GetUsersAsync));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -402,7 +399,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(GetUserByIdAsync), id);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -424,7 +422,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserName={UserName}", nameof(UserIsActiveControlAsync), LogMaskHelper.MaskEmail(userName));
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -451,7 +450,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(UpdateUserAsync), userId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -465,7 +465,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(GetRoleByUserIdAsync), userId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -482,7 +483,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(AddUserRoleAsync), addUserRoleRequestDto?.UserId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -499,7 +501,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(DeleteUserRoleAsync), addUserRoleRequestDto?.UserId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -570,7 +573,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(GetUserMenusAsync), userId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -614,7 +618,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(ChangePasswordAsync), userId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -676,7 +681,7 @@ namespace IdentityServer.Services.User
             catch (Exception ex)
             {
                 _logger.LogError(ex, "PasswordResetLookup beklenmeyen hata ile başarısız oldu.");
-                return ApiResponse<PasswordResetLookupResponseDto>.Fail(UnexpectedErrorMessage);
+                return ApiResponse<PasswordResetLookupResponseDto>.Fail(ApiErrors.Unexpected);
             }
         }
 
@@ -760,7 +765,7 @@ namespace IdentityServer.Services.User
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Şifre sıfırlama beklenmeyen hata ile başarısız oldu. UserId={UserId}", userId);
-                response.Errors.Add(UnexpectedErrorMessage);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -785,7 +790,7 @@ namespace IdentityServer.Services.User
             catch (Exception ex)
             {
                 _logger.LogError(ex, "İletişim bilgisi okunurken beklenmeyen hata oluştu. UserId={UserId}", userId);
-                response.Errors.Add(UnexpectedErrorMessage);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
 
             return response;
@@ -807,7 +812,7 @@ namespace IdentityServer.Services.User
             catch (Exception ex)
             {
                 _logger.LogError(ex, "E-posta doğrulama durumu okunurken beklenmeyen hata oluştu. UserId={UserId}", userId);
-                response.Errors.Add(UnexpectedErrorMessage);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
 
             return response;
@@ -823,7 +828,8 @@ namespace IdentityServer.Services.User
             }
             catch (Exception ex)
             {
-                response.Errors.Add(ex.Message);
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(GetUserChangeLogsAsync), userId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             return response;
         }
@@ -951,7 +957,8 @@ namespace IdentityServer.Services.User
                 catch (Exception ex)
                 {
                     // Transaction otomatik rollback olacak
-                    response.Errors.Add($"Email güncelleme sırasında hata oluştu: {ex.Message}");
+                    _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(UpdateEmailAsync), userId);
+                    response.Errors.Add(ApiErrors.Unexpected);
                 }
             }
 
@@ -1076,7 +1083,8 @@ namespace IdentityServer.Services.User
                 catch (Exception ex)
                 {
                     // Transaction otomatik rollback olacak
-                    response.Errors.Add($"Profil bilgileri güncelleme sırasında hata oluştu: {ex.Message}");
+                    _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(UpdateProfileInfoAsync), userId);
+                    response.Errors.Add(ApiErrors.Unexpected);
                 }
             }
             
