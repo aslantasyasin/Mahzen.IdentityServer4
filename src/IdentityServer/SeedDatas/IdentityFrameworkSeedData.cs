@@ -13,51 +13,6 @@ namespace IdentityServer.SeedDatas
         public static void Seed(ConfigurationDbContext context)
         {
             
-            if (!context.Clients.Any())
-            {
-                var client1 = new Client
-                {
-                    ClientId = "client",
-
-                    // no interactive user, use the clientid/secret for authentication
-                    AllowedGrantTypes = GrantTypes.ResourceOwnerPasswordAndClientCredentials,
-
-                    // secret for authentication
-                    ClientSecrets =
-                    {
-                        new Secret("secret".Sha256())
-                     },
-
-                    // scopes that client has access to
-                    AllowedScopes = { "api1.read", IdentityServerConstants.LocalApi.ScopeName },
-                    AllowOfflineAccess=true
-                    
-                };
-
-                var client2 = new Client
-                {
-                    //ClientId = "jobtr-react-client",
-                    ClientId = "job-tracking-ui",
-                    RequireClientSecret = false,
-                    // no interactive user, use the clientid/secret for authentication
-                    AllowedGrantTypes = GrantTypes.ResourceOwnerPassword,
-                    ClientName = "Job Tracking Client",
-                    // secret for authentication
-                    
-
-                    // scopes that client has access to
-                    AllowedScopes = { "api1.read", IdentityServerConstants.LocalApi.ScopeName, "catalog_api.read", "catalog_api.update", "catalog_api.write", IdentityServerConstants.StandardScopes.Email, IdentityServerConstants.StandardScopes.OpenId, IdentityServerConstants.StandardScopes.Profile,
-                    IdentityServerConstants.StandardScopes.OfflineAccess, "Roles", "gateway_api.fullpermission", "auth_api.fullpermission"},
-                    AllowOfflineAccess = true,
-                    //RedirectUris = { "http://localhost:3000/callback" },
-                    AllowedCorsOrigins = { "http://localhost:3000" },
-                    //PostLogoutRedirectUris = { "http://localhost:3000" }
-
-                };
-                context.Clients.Add(client1.ToEntity());
-                context.Clients.Add(client2.ToEntity());
-            }
-            
             if (!context.IdentityResources.Any())
             {
                 var list = new List<IdentityServer4.EntityFramework.Entities.IdentityResource>();
