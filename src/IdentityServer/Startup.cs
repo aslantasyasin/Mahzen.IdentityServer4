@@ -205,6 +205,17 @@ namespace IdentityServer
             });
         }
 
+        public static System.Collections.Generic.IEnumerable<Microsoft.AspNetCore.HttpOverrides.IPNetwork> TrustedProxyNetworks(IConfiguration configuration)
+        {
+            foreach (var cidr in configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? Array.Empty<string>())
+            {
+                var parts = cidr.Split('/');
+                if (parts.Length != 2 || !System.Net.IPAddress.TryParse(parts[0], out var address) || !int.TryParse(parts[1], out var prefix))
+                    throw new InvalidOperationException($"ForwardedHeaders:KnownNetworks içinde geçersiz CIDR: {cidr}");
+                yield return new Microsoft.AspNetCore.HttpOverrides.IPNetwork(address, prefix);
+            }
+        }
+
         public static bool HasAdminRole(ClaimsPrincipal user) =>
             user.Claims.Any(c =>
                 (c.Type == "role" || c.Type == ClaimTypes.Role) &&
@@ -215,7 +226,8 @@ namespace IdentityServer
             // Reverse proxy (k8s ingress / nginx) X-Forwarded-Proto header'ını okuyarak
             // IDS4'ün gerçek scheme'i (https) algılamasını sağlar. Discovery document'taki
             // jwks_uri / token_endpoint gibi URL'lerin doğru scheme ile üretilmesi için şart.
-            // KnownNetworks/KnownProxies boş = tüm proxy'lere güven (cluster-internal kullanım).
+            // Başlıklara yalnızca ForwardedHeaders:KnownNetworks içindeki adreslerden gelen
+            // bağlantılarda güvenilir; liste boşsa eskisi gibi herkese güvenilir.
             var forwardedOptions = new ForwardedHeadersOptions
             {
                 ForwardedHeaders = ForwardedHeaders.XForwardedFor
@@ -224,6 +236,8 @@ namespace IdentityServer
             };
             forwardedOptions.KnownNetworks.Clear();
             forwardedOptions.KnownProxies.Clear();
+            foreach (var network in TrustedProxyNetworks(Configuration))
+                forwardedOptions.KnownNetworks.Add(network);
             app.UseForwardedHeaders(forwardedOptions);
 
             if (Environment.IsDevelopment())

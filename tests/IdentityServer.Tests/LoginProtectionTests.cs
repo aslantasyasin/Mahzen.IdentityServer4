@@ -2,6 +2,7 @@ using System.Net;
 using IdentityServer.Services.Login;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -576,4 +577,29 @@ public class LoginProtectionServiceTests
         Assert.All(Enumerable.Range(0, 100).Select(_ => LoginSecrets.NewCode()), c => Assert.Matches("^[0-9]{6}$", c));
         Assert.All(Enumerable.Range(0, 20).Select(_ => LoginSecrets.NewDeviceToken()), t => Assert.Matches("^[A-Za-z0-9_-]{43}$", t));
     }
+}
+
+public class TrustedProxyNetworkTests
+{
+    private static IEnumerable<Microsoft.AspNetCore.HttpOverrides.IPNetwork> Networks(params string[] cidrs) =>
+        IdentityServer.Startup.TrustedProxyNetworks(new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(cidrs.Select((c, i) => new KeyValuePair<string, string?>($"ForwardedHeaders:KnownNetworks:{i}", c)))
+            .Build()).ToList();
+
+    [Fact]
+    public void Configured_networks_contain_cluster_addresses_but_not_internet_ones()
+    {
+        var networks = Networks("10.244.0.0/16", "127.0.0.0/8");
+
+        Assert.Contains(networks, n => n.Contains(IPAddress.Parse("10.244.0.202")));
+        Assert.Contains(networks, n => n.Contains(IPAddress.Parse("127.0.0.1")));
+        Assert.DoesNotContain(networks, n => n.Contains(IPAddress.Parse("95.70.1.2")));
+    }
+
+    [Fact]
+    public void An_empty_list_keeps_the_old_trust_everyone_behaviour() => Assert.Empty(Networks());
+
+    [Fact]
+    public void A_malformed_entry_stops_startup() =>
+        Assert.Throws<InvalidOperationException>(() => Networks("10.244.0.0"));
 }
