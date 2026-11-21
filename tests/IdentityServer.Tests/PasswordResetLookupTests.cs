@@ -58,7 +58,7 @@ public class PasswordResetLookupTests
             .BuildServiceProvider()
             .GetRequiredService<IServiceScopeFactory>();
         return new UserService(new SingleUserManager(), null!, scopes, null!, null!, null!, null!, null!,
-            NullLogger<UserService>.Instance, null!, protection);
+            NullLogger<UserService>.Instance, null!, protection, null!);
     }
 
     private async Task AddDevice(string userId, string token)

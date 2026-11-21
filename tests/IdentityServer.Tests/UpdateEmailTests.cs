@@ -2,11 +2,14 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using IdentityServer.Models;
 using IdentityServer.Models.Dto.User;
+using IdentityServer.Services.Login;
 using IdentityServer.Services.User;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace IdentityServer.Tests;
 
@@ -36,6 +39,7 @@ public class UpdateEmailTests
     {
         public readonly ApplicationUser Customer = new() { Id = UserId, UserName = "ali@ornek.com", Email = "ali@ornek.com", IsActive = true };
         public int EmailChanges;
+        public bool FailToSave;
 
         public Users() : base(new NoStore(), null!, null!, null!, null!, null!, null!, null!, null!) { }
 
@@ -50,7 +54,8 @@ public class UpdateEmailTests
             user.Email = newEmail;
             return Task.FromResult(IdentityResult.Success);
         }
-        public override Task<IdentityResult> UpdateAsync(ApplicationUser user) => Task.FromResult(IdentityResult.Success);
+        public override Task<IdentityResult> UpdateAsync(ApplicationUser user) =>
+            FailToSave ? throw new InvalidOperationException("db") : Task.FromResult(IdentityResult.Success);
     }
 
     private sealed class NoChangeLog : IUserChangeLogService
@@ -58,7 +63,38 @@ public class UpdateEmailTests
         public Task LogChangeAsync(string userId, string fieldName, string oldValue, string newValue, string changedBy) => Task.CompletedTask;
     }
 
+    private sealed class Mailer : ILoginMailer
+    {
+        public bool Accepts = true;
+        public readonly List<(string To, string Template, IReadOnlyDictionary<string, string> Model)> Sent = new();
+
+        public Task<bool> SendAsync(string to, string templateKey, IReadOnlyDictionary<string, string> model)
+        {
+            Sent.Add((to, templateKey, model));
+            return Task.FromResult(Accepts);
+        }
+    }
+
+    private sealed class FixedClock : ISystemClock
+    {
+        public DateTimeOffset UtcNow => new(2026, 11, 22, 10, 0, 0, TimeSpan.Zero);
+    }
+
     private readonly Users _users = new();
+    private readonly Mailer _mailer = new();
+    private readonly LoginProtectionServiceTests.MemoryStore _store = new();
+    private readonly LoginProtectionService _protection;
+
+    public UpdateEmailTests()
+    {
+        var work = new LoginProtectionServiceTests.ImmediateWork();
+        _protection = new LoginProtectionService(_store, new LoginProtectionServiceTests.RecordingMailer(), work, new LoginFallbackLimiter(),
+            Options.Create(new LoginProtectionOptions { Mode = LoginProtectionMode.Shadow }), NullLogger<LoginProtectionService>.Instance, new FixedClock());
+        work.Service = _protection;
+    }
+
+    private Task<IdentityServer.Models.Base.ApiResponse<bool>> Change(string email) =>
+        Service().UpdateEmailAsync(new UpdateEmailRequestDto { Email = email, CurrentPassword = Password });
 
     private UserService Service()
     {
@@ -70,12 +106,79 @@ public class UpdateEmailTests
             .BuildServiceProvider()
             .GetRequiredService<IServiceScopeFactory>();
         return new UserService(_users, null!, scopes, null!, null!, null!, new NoChangeLog(), null!,
-            NullLogger<UserService>.Instance, null!, null!);
+            NullLogger<UserService>.Instance, null!, _protection, _mailer);
     }
 
     [Fact]
     public async Task The_right_password_changes_the_email()
     {
+        var result = await Service().UpdateEmailAsync(new UpdateEmailRequestDto { Email = NewEmail, CurrentPassword = Password });
+
+        Assert.False(result.HasError);
+        Assert.Equal(NewEmail, _users.Customer.Email);
+        var notice = Assert.Single(_mailer.Sent);
+        Assert.Equal("ali@ornek.com", notice.To);
+        Assert.Equal("email-changed", notice.Template);
+        Assert.Equal(new[] { "At" }, notice.Model.Keys);
+        Assert.Matches(@"^[0-9]{2}\.[0-9]{2}\.[0-9]{4} [0-9]{2}:[0-9]{2}$", notice.Model["At"]);
+    }
+
+    [Fact]
+    public async Task Only_three_changes_an_hour_are_allowed()
+    {
+        for (var i = 1; i <= LoginProtectionService.EmailChangesPerHour; i++)
+            Assert.False((await Change($"yeni{i}@ornek.com")).HasError);
+
+        var refused = await Change("bir-tane-daha@ornek.com");
+
+        Assert.True(refused.HasError);
+        Assert.Equal("yeni3@ornek.com", _users.Customer.Email);
+        Assert.Equal(LoginProtectionService.EmailChangesPerHour, _mailer.Sent.Count);
+    }
+
+    [Theory]
+    [InlineData("password_change")]
+    [InlineData("password_reset")]
+    public async Task Resetting_the_password_does_not_reset_the_change_limit(string reason)
+    {
+        for (var i = 1; i <= LoginProtectionService.EmailChangesPerHour; i++)
+            await Change($"yeni{i}@ornek.com");
+
+        await _protection.ResetUserAsync(UserId, reason);
+
+        Assert.True((await Change("bir-tane-daha@ornek.com")).HasError);
+    }
+
+    [Theory]
+    [InlineData("ali@ornek.com")]
+    [InlineData(" ALI@ornek.com ")]
+    public async Task The_current_address_is_not_a_change(string email)
+    {
+        var result = await Change(email);
+
+        Assert.True(result.HasError);
+        Assert.DoesNotContain("PasswordMismatch", result.Errors);
+        Assert.Equal(0, _users.EmailChanges);
+        Assert.Empty(_mailer.Sent);
+        Assert.Empty(_store.Counts);
+    }
+
+    [Fact]
+    public async Task A_change_that_fails_to_save_sends_no_notice()
+    {
+        _users.FailToSave = true;
+
+        var result = await Service().UpdateEmailAsync(new UpdateEmailRequestDto { Email = NewEmail, CurrentPassword = Password });
+
+        Assert.True(result.HasError);
+        Assert.Empty(_mailer.Sent);
+    }
+
+    [Fact]
+    public async Task A_full_mail_queue_does_not_undo_the_change()
+    {
+        _mailer.Accepts = false;
+
         var result = await Service().UpdateEmailAsync(new UpdateEmailRequestDto { Email = NewEmail, CurrentPassword = Password });
 
         Assert.False(result.HasError);
@@ -93,6 +196,7 @@ public class UpdateEmailTests
         Assert.Equal(new[] { "PasswordMismatch" }, result.Errors);
         Assert.Equal(0, _users.EmailChanges);
         Assert.Equal("ali@ornek.com", _users.Customer.Email);
+        Assert.Empty(_mailer.Sent);
     }
 
     [Fact]
@@ -111,5 +215,6 @@ public class UpdateEmailTests
         Assert.True(result.HasError);
         Assert.DoesNotContain("PasswordMismatch", result.Errors);
         Assert.Equal(0, _users.EmailChanges);
+        Assert.Empty(_mailer.Sent);
     }
 }

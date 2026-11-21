@@ -83,8 +83,8 @@ ON CONFLICT (""UserId"", ""Kind"") DO UPDATE SET ""SentAt"" = @now
 WHERE ids4.""LoginNotice"".""SentAt"" <= @sentBefore
 RETURNING 1;";
 
-    private const string ResetUserSql = @"
-DELETE FROM ids4.""LoginThrottle"" WHERE ""UserId"" = @userId;
+    private const string ResetUserSql = $@"
+DELETE FROM ids4.""LoginThrottle"" WHERE ""UserId"" = @userId AND ""Scope"" <> '{LoginProtectionService.EmailChangesScope}';
 UPDATE ids4.""LoginDevice"" SET ""RevokedAt"" = @now, ""RevokeReason"" = @reason WHERE ""UserId"" = @userId AND ""RevokedAt"" IS NULL;
 UPDATE ids4.""LoginChallenge"" SET ""UsedAt"" = @now WHERE ""UserId"" = @userId AND ""UsedAt"" IS NULL;
 DELETE FROM ids4.""LoginNotice"" WHERE ""UserId"" = @userId AND ""Kind"" = 'under-attack';";

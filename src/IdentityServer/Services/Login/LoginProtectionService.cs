@@ -17,10 +17,13 @@ public sealed class LoginProtectionService
     public const string AttackNoticeKind = "attack";
     public const string UnderAttackKind = "under-attack";
     public const string NoticesScope = "notices";
+    public const string EmailChangesScope = "email-changes";
+    public const int EmailChangesPerHour = 3;
     public const int NoticesPerUserPerHour = 5;
     public const int CleanupBatchSize = 5000;
 
     private static readonly TimeSpan ChallengeSendWindow = TimeSpan.FromHours(1);
+    private static readonly TimeSpan EmailChangeWindow = TimeSpan.FromHours(1);
     private static readonly TimeSpan TurkeyUtcOffset = TimeSpan.FromHours(3);
 
     private readonly ILoginProtectionStore _store;
@@ -191,10 +194,13 @@ public sealed class LoginProtectionService
         }
     }
 
+    public async Task<bool> TryClaimEmailChangeAsync(string userId) =>
+        await _store.IncrementAsync(userId, EmailChangesScope, WindowStart(_clock.UtcNow, EmailChangeWindow)) <= EmailChangesPerHour;
+
     public Task<int> CleanupAsync()
     {
         var now = _clock.UtcNow;
-        var longestWindow = new[] { _options.SourceWindow, _options.AccountWindow, _options.DeviceWindow, _options.StepUpFailureWindow, ChallengeSendWindow }.Max();
+        var longestWindow = new[] { _options.SourceWindow, _options.AccountWindow, _options.DeviceWindow, _options.StepUpFailureWindow, ChallengeSendWindow, EmailChangeWindow }.Max();
         return _store.CleanupAsync(now, WindowStart(now, longestWindow) - longestWindow, CleanupBatchSize);
     }
 
@@ -313,7 +319,7 @@ public sealed class LoginProtectionService
         return LoginOutcome.StepUpFailed();
     }
 
-    private static string TurkeyTime(DateTimeOffset now) =>
+    internal static string TurkeyTime(DateTimeOffset now) =>
         now.ToOffset(TurkeyUtcOffset).ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture);
 
     public static string SourceScope(string source) => "source:" + source;

@@ -215,7 +215,7 @@ public class LoginProtectionServiceTests
             Check();
             lock (_gate)
             {
-                foreach (var k in Counts.Keys.Where(k => k.User == userId).ToList()) Counts.Remove(k);
+                foreach (var k in Counts.Keys.Where(k => k.User == userId && k.Scope != LoginProtectionService.EmailChangesScope).ToList()) Counts.Remove(k);
                 for (var i = 0; i < Devices.Count; i++)
                     if (Devices[i].User == userId && Devices[i].Revoked is null) Devices[i] = Devices[i] with { Revoked = now, Reason = reason };
                 foreach (var id in Challenges.Keys.ToList())

@@ -39,6 +39,7 @@ namespace IdentityServer.Services.User
         private readonly ILogger<UserService> _logger;
         private readonly IPersistedGrantService _persistedGrantService;
         private readonly LoginProtectionService _loginProtection;
+        private readonly ILoginMailer _mailer;
 
         // B2C kaydında alınması zorunlu onaylar. Tek otorite burasıdır; yeni bir
         // zorunlu doküman eklenirse yalnızca bu dizi güncellenir.
@@ -48,9 +49,10 @@ namespace IdentityServer.Services.User
             ConsentDocumentType.PrivacyPolicy
         };
 
-        public UserService(UserManager<ApplicationUser> userManager, RoleManager<ApplicationRole> roleManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService, IUserConsentService userConsentService, ILogger<UserService> logger, IPersistedGrantService persistedGrantService, LoginProtectionService loginProtection)
+        public UserService(UserManager<ApplicationUser> userManager, RoleManager<ApplicationRole> roleManager, IServiceScopeFactory serviceScopeFactory, IMapper mapper, IIdentityRepository identityRepository, ICustomRepository customRepository, IUserChangeLogService userChangeLogService, IUserConsentService userConsentService, ILogger<UserService> logger, IPersistedGrantService persistedGrantService, LoginProtectionService loginProtection, ILoginMailer mailer)
         {
             _loginProtection = loginProtection;
+            _mailer = mailer;
             _userManager = userManager;
             _userInfo = new UserInfo(serviceScopeFactory);
             _mapper = mapper;
@@ -842,6 +844,17 @@ namespace IdentityServer.Services.User
                 return ApiResponse<bool>.Fail(PasswordMismatchCode);
             }
 
+            if (string.Equals(model.Email?.Trim(), user.Email, StringComparison.OrdinalIgnoreCase))
+            {
+                return ApiResponse<bool>.Fail("Yeni e-posta adresi mevcut adresinizle aynı.");
+            }
+
+            if (!await _loginProtection.TryClaimEmailChangeAsync(userId))
+            {
+                _logger.LogWarning("email_change_limited UserId={UserId}", userId);
+                return ApiResponse<bool>.Fail("Kısa sürede çok fazla e-posta değişikliği yapıldı. Lütfen bir saat sonra tekrar deneyin.");
+            }
+
             // Email zaten kullanılıyor mu kontrol et
             var existingUser = await _userManager.FindByEmailAsync(model.Email);
             if (existingUser != null && existingUser.Id != userId)
@@ -923,7 +936,14 @@ namespace IdentityServer.Services.User
                     response.Errors.Add($"Email güncelleme sırasında hata oluştu: {ex.Message}");
                 }
             }
-            
+
+            if (response.Data && !string.IsNullOrEmpty(oldEmail) &&
+                !await _mailer.SendAsync(oldEmail, LoginMailTemplates.EmailChanged,
+                    new Dictionary<string, string> { ["At"] = LoginProtectionService.TurkeyTime(DateTimeOffset.UtcNow) }))
+            {
+                _logger.LogError("email_changed_notice_failed UserId={UserId}", userId);
+            }
+
             return response;
         }
         
