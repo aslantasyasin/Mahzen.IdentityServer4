@@ -891,16 +891,16 @@ namespace IdentityServer.Services.User
             var oldUserName = user.UserName;
             var isUsernameChanged = user.UserName == oldEmail;
 
-            // TransactionScope ile atomik işlem
-            using (var scope = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeOption.Required,
-                new System.Transactions.TransactionOptions 
-                { 
-                    IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted 
-                },
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            try
             {
-                try
+                // TransactionScope ile atomik işlem
+                using (var scope = new System.Transactions.TransactionScope(
+                    System.Transactions.TransactionScopeOption.Required,
+                    new System.Transactions.TransactionOptions 
+                    { 
+                        IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted 
+                    },
+                    System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
                 {
                     // 1. Email güncelle
                     var token = await _userManager.GenerateChangeEmailTokenAsync(user, model.Email);
@@ -952,14 +952,14 @@ namespace IdentityServer.Services.User
 
                     // Tüm işlemler başarılı, transaction'ı commit et
                     scope.Complete();
-                    response.Data = true;
                 }
-                catch (Exception ex)
-                {
-                    // Transaction otomatik rollback olacak
-                    _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(UpdateEmailAsync), userId);
-                    response.Errors.Add(ApiErrors.Unexpected);
-                }
+                response.Data = true;
+            }
+            catch (Exception ex)
+            {
+                // Transaction otomatik rollback olacak
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(UpdateEmailAsync), userId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
 
             if (response.Data && !string.IsNullOrEmpty(oldEmail) &&
@@ -1018,16 +1018,16 @@ namespace IdentityServer.Services.User
                 return response;
             }
 
-            // TransactionScope ile atomik işlem
-            using (var scope = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeOption.Required,
-                new System.Transactions.TransactionOptions 
-                { 
-                    IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted 
-                },
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            try
             {
-                try
+                // TransactionScope ile atomik işlem
+                using (var scope = new System.Transactions.TransactionScope(
+                    System.Transactions.TransactionScopeOption.Required,
+                    new System.Transactions.TransactionOptions 
+                    { 
+                        IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted 
+                    },
+                    System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
                 {
                     // 1. FirstName güncelle
                     if (!string.IsNullOrEmpty(model.FirstName) && model.FirstName != oldFirstName)
@@ -1078,14 +1078,14 @@ namespace IdentityServer.Services.User
 
                     // Tüm işlemler başarılı, transaction'ı commit et
                     scope.Complete();
-                    response.Data = true;
                 }
-                catch (Exception ex)
-                {
-                    // Transaction otomatik rollback olacak
-                    _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(UpdateProfileInfoAsync), userId);
-                    response.Errors.Add(ApiErrors.Unexpected);
-                }
+                response.Data = true;
+            }
+            catch (Exception ex)
+            {
+                // Transaction otomatik rollback olacak
+                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(UpdateProfileInfoAsync), userId);
+                response.Errors.Add(ApiErrors.Unexpected);
             }
             
             return response;

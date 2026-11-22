@@ -155,15 +155,16 @@ DELETE FROM ids4.""LoginNotice"" WHERE ""UserId"" = @userId AND ""Kind"" = 'unde
     public async Task<bool> TryClaimNoticeAsync(string userId, string kind, DateTimeOffset now, DateTimeOffset sentBefore) =>
         await ScalarAsync(ClaimNoticeSql, ("userId", userId), ("kind", kind), ("now", Utc(now)), ("sentBefore", Utc(sentBefore))) is { } value and not DBNull;
 
-    public async Task ResetUserAsync(string userId, DateTimeOffset now, string reason)
-    {
-        var connection = await OpenAsync();
-        await using var transaction = await connection.BeginTransactionAsync();
-        await using var command = Command(connection, ResetUserSql, new (string, object)[] { ("userId", userId), ("now", Utc(now)), ("reason", reason) });
-        command.Transaction = transaction;
-        await command.ExecuteNonQueryAsync();
-        await transaction.CommitAsync();
-    }
+    public Task ResetUserAsync(string userId, DateTimeOffset now, string reason) =>
+        WithConnectionAsync(async connection =>
+        {
+            await using var transaction = await connection.BeginTransactionAsync();
+            await using var command = Command(connection, ResetUserSql, new (string, object)[] { ("userId", userId), ("now", Utc(now)), ("reason", reason) });
+            command.Transaction = transaction;
+            await command.ExecuteNonQueryAsync();
+            await transaction.CommitAsync();
+            return 0;
+        });
 
     public async Task<int> CleanupAsync(DateTimeOffset now, DateTimeOffset throttleBefore, int batchSize)
     {
@@ -180,40 +181,46 @@ DELETE FROM ids4.""LoginNotice"" WHERE ""UserId"" = @userId AND ""Kind"" = 'unde
         return deleted;
     }
 
-    private async Task<LoginChallenge> ReadChallengeAsync(string sql, params (string Name, object Value)[] parameters)
-    {
-        var connection = await OpenAsync();
-        await using var command = Command(connection, sql, parameters);
-        await using var reader = await command.ExecuteReaderAsync();
-        if (!await reader.ReadAsync()) return null;
-        return new LoginChallenge(
-            reader.GetGuid(0),
-            reader.GetString(1),
-            reader.GetString(2),
-            new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(3), DateTimeKind.Utc)),
-            reader.IsDBNull(4) ? null : new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(4), DateTimeKind.Utc)),
-            reader.GetBoolean(5));
-    }
+    private Task<LoginChallenge> ReadChallengeAsync(string sql, params (string Name, object Value)[] parameters) =>
+        WithConnectionAsync(async connection =>
+        {
+            await using var command = Command(connection, sql, parameters);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync()) return null;
+            return new LoginChallenge(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(3), DateTimeKind.Utc)),
+                reader.IsDBNull(4) ? null : new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(4), DateTimeKind.Utc)),
+                reader.GetBoolean(5));
+        });
 
-    private async Task<object> ScalarAsync(string sql, params (string Name, object Value)[] parameters)
-    {
-        var connection = await OpenAsync();
-        await using var command = Command(connection, sql, parameters);
-        return await command.ExecuteScalarAsync();
-    }
+    private Task<object> ScalarAsync(string sql, params (string Name, object Value)[] parameters) =>
+        WithConnectionAsync(async connection =>
+        {
+            await using var command = Command(connection, sql, parameters);
+            return await command.ExecuteScalarAsync();
+        });
 
-    private async Task<int> ExecuteAsync(string sql, params (string Name, object Value)[] parameters)
-    {
-        var connection = await OpenAsync();
-        await using var command = Command(connection, sql, parameters);
-        return await command.ExecuteNonQueryAsync();
-    }
+    private Task<int> ExecuteAsync(string sql, params (string Name, object Value)[] parameters) =>
+        WithConnectionAsync(async connection =>
+        {
+            await using var command = Command(connection, sql, parameters);
+            return await command.ExecuteNonQueryAsync();
+        });
 
-    private async Task<DbConnection> OpenAsync()
+    private async Task<T> WithConnectionAsync<T>(Func<DbConnection, Task<T>> work)
     {
-        var connection = _db.Database.GetDbConnection();
-        if (connection.State != ConnectionState.Open) await connection.OpenAsync();
-        return connection;
+        await _db.Database.OpenConnectionAsync();
+        try
+        {
+            return await work(_db.Database.GetDbConnection());
+        }
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
+        }
     }
 
     private static DbCommand Command(DbConnection connection, string sql, IEnumerable<(string Name, object Value)> parameters)
