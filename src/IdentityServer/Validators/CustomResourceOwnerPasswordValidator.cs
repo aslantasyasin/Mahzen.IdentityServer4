@@ -74,7 +74,7 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
         var source = LoginSource.Resolve(_httpContextAccessor.HttpContext, _configuration["Internal:ApiKey"]);
         var raw = context.Request.Raw;
         var deviceId = await _loginProtection.FindTrustedDeviceAsync(user.Id, raw?[DeviceTokenParameter]);
-        var gate = await _loginProtection.EnterAsync(user.Id, user.Email, source, deviceId, userTypes.Contains("Admin"));
+        var gate = await _loginProtection.EnterAsync(user.Id, user.Email, source, deviceId);
 
         bool passwordOk;
         if (_loginProtection.Enforcing)

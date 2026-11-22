@@ -296,7 +296,7 @@ public class LoginProtectionServiceTests
     private static async Task<LoginOutcome> Login(LoginProtectionService service, bool passwordOk, string source = Source, long? device = null,
         bool admin = false, string? stepUpId = null, string? code = null, string user = User, string email = Email)
     {
-        var gate = await service.EnterAsync(user, email, source, device, admin);
+        var gate = await service.EnterAsync(user, email, source, device);
         if (!passwordOk) await service.RecordFailedPasswordAsync(user, source, device);
         return await service.CompleteAsync(new LoginAttempt(user, email, source, device, admin, stepUpId!, code!), gate, passwordOk);
     }
@@ -522,6 +522,69 @@ public class LoginProtectionServiceTests
     }
 
     [Fact]
+    public async Task An_admin_with_a_wrong_password_gets_the_same_answer_as_a_customer()
+    {
+        var service = Service();
+
+        var customer = await Login(service, false, user: "customer-1");
+        var admin = await Login(service, false, admin: true, user: "admin-1");
+
+        Assert.Equal(LoginOutcome.Rejected(), customer);
+        Assert.Equal(customer, admin);
+        Assert.Empty(_mail.Sent);
+    }
+
+    [Fact]
+    public async Task An_admin_with_the_right_password_on_an_untrusted_device_is_mailed_a_code()
+    {
+        var service = Service();
+
+        var outcome = await Login(service, true, admin: true);
+
+        Assert.Equal(LoginOutcomeKind.StepUpRequired, outcome.Kind);
+        Assert.Equal(1, _mail.Count(LoginMailTemplates.Code));
+        Assert.Contains(Messages("login_step_up_required"), m => m.Contains("Reason=admin"));
+    }
+
+    [Fact]
+    public async Task An_admin_who_answers_the_code_gets_in_and_the_device_is_trusted()
+    {
+        var service = Service();
+        var stepUp = await Login(service, true, admin: true);
+
+        var outcome = await Login(service, true, admin: true, stepUpId: stepUp.ChallengeId.ToString(), code: _mail.LastCode);
+
+        Assert.Equal(LoginOutcomeKind.Allowed, outcome.Kind);
+        Assert.NotNull(outcome.DeviceToken);
+    }
+
+    [Fact]
+    public async Task A_broken_store_gives_an_untrusted_admin_the_same_answer_whatever_the_password()
+    {
+        _store.Broken = true;
+        var service = Service();
+
+        var wrong = await Login(service, false, admin: true, source: "client:ip_admin");
+        var right = await Login(service, true, admin: true, source: "client:ip_admin");
+
+        Assert.Equal(LoginOutcome.Rejected(), wrong);
+        Assert.Equal(wrong, right);
+    }
+
+    [Fact]
+    public async Task Shadow_logs_the_admin_step_up_only_after_the_right_password()
+    {
+        var service = Service(LoginProtectionMode.Shadow);
+
+        await Login(service, false, admin: true);
+        Assert.Empty(Messages("login_step_up_required"));
+
+        Assert.Equal(LoginOutcomeKind.Allowed, (await Login(service, true, admin: true)).Kind);
+        Assert.Contains(Messages("login_step_up_required"), m => m.Contains("Reason=admin") && m.Contains("Mode=Shadow"));
+        Assert.Empty(_mail.Sent);
+    }
+
+    [Fact]
     public async Task Admin_needs_a_code_on_an_untrusted_device_but_not_on_a_trusted_one()
     {
         var service = Service();
@@ -709,7 +772,7 @@ public class LoginProtectionServiceTests
         await Fail(service, 5);
         var stepUp = await Login(service, true);
         var code = _mail.LastCode;
-        var gate = await service.EnterAsync(User, Email, Source, null, false);
+        var gate = await service.EnterAsync(User, Email, Source, null);
         _store.Broken = true;
 
         var outcome = await service.CompleteAsync(new LoginAttempt(User, Email, Source, null, false, stepUp.ChallengeId.ToString()!, code), gate, true);
@@ -728,7 +791,7 @@ public class LoginProtectionServiceTests
 
         Assert.Equal(LoginOutcomeKind.TemporarilyUnavailable, (await Login(service, true)).Kind);
         Assert.Equal(LoginOutcomeKind.Allowed, (await Login(service, true, source: "client:ip_other")).Kind);
-        Assert.Equal(LoginOutcomeKind.TemporarilyUnavailable, (await Login(service, true, admin: true, source: "client:ip_admin")).Kind);
+        Assert.Equal(LoginOutcomeKind.Rejected, (await Login(service, true, admin: true, source: "client:ip_admin")).Kind);
         Assert.Contains(_log.Entries, e => e.Level == LogLevel.Error && e.Message.StartsWith("login_protection_store_failed"));
     }
 

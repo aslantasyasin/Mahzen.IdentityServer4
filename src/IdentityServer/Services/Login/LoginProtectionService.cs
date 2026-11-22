@@ -71,7 +71,7 @@ public sealed class LoginProtectionService
         }
     }
 
-    public async Task<LoginGate> EnterAsync(string userId, string email, string source, long? deviceId, bool isAdmin)
+    public async Task<LoginGate> EnterAsync(string userId, string email, string source, long? deviceId)
     {
         if (_options.Mode == LoginProtectionMode.Off || deviceId is not null) return LoginGate.Open;
         var now = _clock.UtcNow;
@@ -100,7 +100,6 @@ public sealed class LoginProtectionService
 
             var reason = sourceAttempts > _options.SourceFailureLimit ? "source"
                 : underAttackSince > now - _options.UnderAttackDuration ? "account"
-                : isAdmin ? "admin"
                 : null;
             if (reason is null) return LoginGate.Open;
 
@@ -113,7 +112,6 @@ public sealed class LoginProtectionService
         {
             _logger.LogError(ex, "login_protection_store_failed Step=enter UserId={UserId} Mode={Mode} falling back to in-memory limits", userId, _options.Mode);
             if (!Enforcing) return LoginGate.Open;
-            if (isAdmin) return new LoginGate(LoginGateKind.Unavailable, "admin");
             return _fallback.RecordAttempt(userId, source, _options.SourceWindow, now) > _options.SourceFailureLimit
                 ? new LoginGate(LoginGateKind.Unavailable, "fallback")
                 : LoginGate.Open;
@@ -166,6 +164,13 @@ public sealed class LoginProtectionService
 
             if (!credentialsOk) return LoginOutcome.Rejected();
 
+            if (attempt.IsAdmin && attempt.DeviceId is null)
+            {
+                _logger.LogInformation("login_step_up_required UserId={UserId} Source={Source} Reason=admin Mode={Mode}",
+                    attempt.UserId, attempt.Source, _options.Mode);
+                if (Enforcing) return await StepUpAsync(attempt, credentialsOk, now);
+            }
+
             if (attempt.DeviceId is { } deviceId)
             {
                 await _store.TouchDeviceAsync(deviceId, now, now + _options.DeviceLifetime);
@@ -180,7 +185,7 @@ public sealed class LoginProtectionService
             if (verifying) return LoginOutcome.StepUpFailed();
             if (gate.Kind == LoginGateKind.StepUp) return LoginOutcome.TemporarilyUnavailable();
             if (!credentialsOk) return LoginOutcome.Rejected();
-            return Enforcing && attempt.IsAdmin && attempt.DeviceId is null ? LoginOutcome.TemporarilyUnavailable() : LoginOutcome.Allowed();
+            return Enforcing && attempt.IsAdmin && attempt.DeviceId is null ? LoginOutcome.Rejected() : LoginOutcome.Allowed();
         }
     }
 

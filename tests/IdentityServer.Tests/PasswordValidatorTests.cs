@@ -111,6 +111,24 @@ public class PasswordValidatorTests
     }
 
     [Fact]
+    public async Task Enforce_gives_an_admin_and_a_customer_with_a_wrong_password_the_same_answer()
+    {
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
+        _users.PasswordOk = false;
+
+        _users.UserTypes = new[] { "B2C" };
+        var customer = Context();
+        await validator.ValidateAsync(customer);
+        _users.UserTypes = new[] { "Admin" };
+        var admin = Context();
+        await validator.ValidateAsync(admin);
+
+        Assert.True(customer.Result.IsError);
+        Assert.Equal((customer.Result.Error, customer.Result.ErrorDescription, customer.Result.CustomResponse),
+            (admin.Result.Error, admin.Result.ErrorDescription, admin.Result.CustomResponse));
+    }
+
+    [Fact]
     public async Task Shadow_checks_the_password_through_identity_with_lockout()
     {
         var (validator, signIn) = Create(LoginProtectionMode.Shadow);
