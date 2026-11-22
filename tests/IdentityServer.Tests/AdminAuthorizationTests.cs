@@ -29,7 +29,6 @@ public class AdminAuthorizationTests
         nameof(UserController.ChangePassword),
         nameof(UserController.UpdateProfileInfo),
         nameof(UserController.UpdateEmail),
-        nameof(UserController.GetUserChangeLogs),
         nameof(UserController.GetEmailConfirmed),
     };
 

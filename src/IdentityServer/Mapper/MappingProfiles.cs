@@ -23,7 +23,6 @@ namespace IdentityServer.Mapper
             
             CreateMap<ApplicationUserRequestDto, ApplicationUser>().ReverseMap();
 			CreateMap<ApplicationUserUpdateRequestDto, ApplicationUser>().PreserveReferences();
-			CreateMap<UserChangeLog, UserChangeLogResponseDto>().ReverseMap();
     //            .ForMember(dest => dest.IsActive, opt => opt.Ignore())
     //            .ForMember(dest => dest.UserName, opt => opt.MapFrom(src => src.UserName != null ? src.UserName : null))
 				//.ForMember(dest => dest.FirstName, opt => opt.MapFrom(src => src.UserName != null ? src.UserName : null))

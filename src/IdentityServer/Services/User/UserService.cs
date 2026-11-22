@@ -821,22 +821,6 @@ namespace IdentityServer.Services.User
             return response;
         }
         
-        public async Task<ApiResponse<List<UserChangeLogResponseDto>>> GetUserChangeLogsAsync(string userId)
-        {
-            var response = new ApiResponse<List<UserChangeLogResponseDto>>();
-            try
-            {
-                var logs = await _customRepository.GetUserChangeLogs(userId);
-                response.Data = _mapper.Map<List<UserChangeLogResponseDto>>(logs);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "user_operation_failed Operation={Operation} UserId={UserId}", nameof(GetUserChangeLogsAsync), userId);
-                response.Errors.Add(ApiErrors.Unexpected);
-            }
-            return response;
-        }
-        
         public async Task<ApiResponse<bool>> UpdateEmailAsync(UpdateEmailRequestDto model)
         {
             var response = new ApiResponse<bool>();
