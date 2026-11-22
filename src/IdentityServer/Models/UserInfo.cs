@@ -1,52 +1,23 @@
-﻿﻿using System;
+﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using Microsoft.Extensions.DependencyInjection;
-using System.Linq;
 
 namespace IdentityServer.Models
 {
 	public class UserInfo
 	{
-		private readonly IServiceScopeFactory _serviceScope;
+		private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public UserInfo(IServiceScopeFactory serviceScope)
+		public UserInfo(IServiceScopeFactory serviceScope)
 		{
-			_serviceScope = serviceScope;
-            PropSetInfo();
+			using var scope = serviceScope.CreateScope();
+			_httpContextAccessor = scope.ServiceProvider.GetRequiredService<IHttpContextAccessor>();
 		}
 
-		public int TenantId { get; set; }
-		public string UserId { get; set; }
+		public int TenantId => int.TryParse(User?.FindFirst("tenantid")?.Value, out var tenantId) ? tenantId : 0;
 
-		private void PropSetInfo()
-		{
-            using var scope = _serviceScope.CreateScope();
-            var httpContext = scope.ServiceProvider.GetRequiredService<IHttpContextAccessor>();
+		public string UserId => User?.FindFirst("sub")?.Value;
 
-            string authHeader = httpContext.HttpContext.Request.Headers["Authorization"];
-
-            if (authHeader != null)
-            {
-                var jwtToken = authHeader.Split(" ")[1];
-                JwtSecurityTokenHandler handler = new JwtSecurityTokenHandler();
-                JwtSecurityToken jwtSecurityToken = handler.ReadJwtToken(jwtToken);
-
-                Claim tenantIdClaim = jwtSecurityToken.Claims.FirstOrDefault(c => c.Type == "tenantid");
-                if(tenantIdClaim != null)
-                {
-                    string tenantid = tenantIdClaim?.Value;
-                    this.TenantId = int.Parse(tenantid);
-                }
-                
-                Claim userIdClaim = jwtSecurityToken.Claims.FirstOrDefault(c => c.Type == "sub");
-                if(userIdClaim != null)
-                {
-                    this.UserId = userIdClaim?.Value;
-                }
-            }
-        }
+		private ClaimsPrincipal User => _httpContextAccessor.HttpContext?.User;
 	}
 }
-

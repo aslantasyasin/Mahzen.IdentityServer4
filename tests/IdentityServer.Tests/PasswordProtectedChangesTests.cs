@@ -1,4 +1,3 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using IdentityServer.Models;
 using IdentityServer.Models.Dto.User;
@@ -139,8 +138,7 @@ public class PasswordProtectedChangesTests
     private UserService Service()
     {
         var context = new DefaultHttpContext();
-        var token = new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims: new[] { new Claim("sub", UserId) }));
-        context.Request.Headers["Authorization"] = $"Bearer {token}";
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", UserId) }, "test"));
         var scopes = new ServiceCollection()
             .AddSingleton<IHttpContextAccessor>(new HttpContextAccessor { HttpContext = context })
             .BuildServiceProvider()

@@ -1,4 +1,3 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using IdentityServer.Data;
 using IdentityServer.Models;
@@ -35,8 +34,7 @@ public class UpdateEmailPostgresTests
     {
         var userId = Guid.NewGuid().ToString();
         var context = new DefaultHttpContext();
-        var jwt = new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims: new[] { new Claim("sub", userId) }));
-        context.Request.Headers["Authorization"] = $"Bearer {jwt}";
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", userId) }, "test"));
 
         var services = new ServiceCollection()
             .AddLogging()
