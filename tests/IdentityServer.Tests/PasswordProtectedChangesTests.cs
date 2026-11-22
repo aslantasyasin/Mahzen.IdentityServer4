@@ -110,6 +110,20 @@ public class PasswordProtectedChangesTests
         }
     }
 
+    private sealed class Grants : IdentityServer4.Services.IPersistedGrantService
+    {
+        public readonly List<string> RevokedSubjects = new();
+        public bool Fails;
+        public Task<IEnumerable<IdentityServer4.Models.Grant>> GetAllGrantsAsync(string subjectId) =>
+            Task.FromResult(Enumerable.Empty<IdentityServer4.Models.Grant>());
+        public Task RemoveAllGrantsAsync(string subjectId, string clientId = null!, string sessionId = null!)
+        {
+            if (Fails) throw new InvalidOperationException(InternalDetail);
+            RevokedSubjects.Add(subjectId);
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class Clock : ISystemClock
     {
         public DateTimeOffset UtcNow { get; set; } = new(2026, 11, 22, 10, 0, 0, TimeSpan.Zero);
@@ -121,6 +135,7 @@ public class PasswordProtectedChangesTests
     private readonly Mailer _mailer = new();
     private readonly RecordingLogger<UserService> _log = new();
     private readonly NoChangeLog _changeLog = new();
+    private readonly Grants _grants = new();
     private readonly LoginProtectionServiceTests.MemoryStore _store = new();
     private readonly LoginProtectionService _protection;
 
@@ -144,7 +159,7 @@ public class PasswordProtectedChangesTests
             .BuildServiceProvider()
             .GetRequiredService<IServiceScopeFactory>();
         return new UserService(_users, null!, scopes, null!, null!, null!, _changeLog, null!,
-            _log, null!, _protection, _mailer);
+            _log, _grants, _protection, _mailer);
     }
 
     [Fact]
@@ -277,6 +292,34 @@ public class PasswordProtectedChangesTests
         Assert.True(reset.Data);
         Assert.Equal(2, _log.Messages.Count(m => m.StartsWith("user_change_log_failed")));
         Assert.DoesNotContain(_store.Counts.Keys, k => k.Scope == LoginProtectionService.PasswordChecksScope);
+    }
+
+    [Fact]
+    public async Task A_password_change_revokes_every_session()
+    {
+        var result = await ChangePassword(Password);
+
+        Assert.False(result.HasError, string.Join(" | ", result.Errors));
+        Assert.Equal(new[] { UserId }, _grants.RevokedSubjects);
+    }
+
+    [Fact]
+    public async Task A_wrong_current_password_revokes_no_session()
+    {
+        await ChangePassword("YanlisSifre1!");
+
+        Assert.Empty(_grants.RevokedSubjects);
+    }
+
+    [Fact]
+    public async Task A_failed_session_revocation_keeps_the_change_and_is_logged()
+    {
+        _grants.Fails = true;
+
+        var result = await ChangePassword(Password);
+
+        Assert.False(result.HasError, string.Join(" | ", result.Errors));
+        Assert.Contains(_log.Messages, m => m.StartsWith("password_change_sessions_not_revoked"));
     }
 
     [Fact]

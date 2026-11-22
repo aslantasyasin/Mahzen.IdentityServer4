@@ -607,6 +607,14 @@ namespace IdentityServer.Services.User
 
                 if (result.Succeeded)
                 {
+                    try
+                    {
+                        await _persistedGrantService.RemoveAllGrantsAsync(userId);
+                    }
+                    catch (Exception grantEx)
+                    {
+                        _logger.LogError(grantEx, "password_change_sessions_not_revoked UserId={UserId} the password changed but old refresh tokens may still work; revoke them by hand", userId);
+                    }
                     await _loginProtection.ResetUserAsync(userId, "password_change");
                     // Şifre değişikliğini logla (şifreleri kaydetme, sadece bilgi)
                     try
@@ -746,8 +754,7 @@ namespace IdentityServer.Services.User
                     // geri alınamaz. Kullanıcıya "olmadı" demek yanlış olur. Ama bu,
                     // elle müdahale gerektiren bir durum: eski oturumlar hâlâ açık.
                     _logger.LogError(grantEx,
-                        "Şifre sıfırlandı fakat oturumlar (persisted grants) iptal edilemedi. " +
-                        "Eski refresh token'lar hâlâ geçerli olabilir, elle iptal gerekir. UserId={UserId}",
+                        "password_reset_sessions_not_revoked UserId={UserId} the password was reset but old refresh tokens may still work; revoke them by hand",
                         userId);
                 }
 
