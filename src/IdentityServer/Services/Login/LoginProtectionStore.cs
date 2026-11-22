@@ -91,7 +91,7 @@ DELETE FROM ids4.""LoginNotice"" WHERE ""UserId"" = @userId AND ""Kind"" = 'unde
 
     private static readonly string[] CleanupSql =
     {
-        @"DELETE FROM ids4.""LoginThrottle"" WHERE ctid IN (SELECT ctid FROM ids4.""LoginThrottle"" WHERE ""WindowStart"" < @throttleBefore LIMIT @batch);",
+        $@"DELETE FROM ids4.""LoginThrottle"" WHERE ctid IN (SELECT ctid FROM ids4.""LoginThrottle"" WHERE ""WindowStart"" < @dailyThrottleBefore OR (""WindowStart"" < @throttleBefore AND ""Scope"" <> '{LoginProtectionService.PasswordChecksDayScope}') LIMIT @batch);",
         @"DELETE FROM ids4.""LoginChallenge"" WHERE ctid IN (SELECT ctid FROM ids4.""LoginChallenge"" WHERE ""ExpiresAt"" < @now LIMIT @batch);",
         @"DELETE FROM ids4.""LoginDevice"" WHERE ctid IN (SELECT ctid FROM ids4.""LoginDevice"" WHERE ""ExpiresAt"" < @now OR ""RevokedAt"" < @now LIMIT @batch);",
     };
@@ -166,7 +166,7 @@ DELETE FROM ids4.""LoginNotice"" WHERE ""UserId"" = @userId AND ""Kind"" = 'unde
             return 0;
         });
 
-    public async Task<int> CleanupAsync(DateTimeOffset now, DateTimeOffset throttleBefore, int batchSize)
+    public async Task<int> CleanupAsync(DateTimeOffset now, DateTimeOffset throttleBefore, DateTimeOffset dailyThrottleBefore, int batchSize)
     {
         var deleted = 0;
         foreach (var sql in CleanupSql)
@@ -174,7 +174,7 @@ DELETE FROM ids4.""LoginNotice"" WHERE ""UserId"" = @userId AND ""Kind"" = 'unde
             int affected;
             do
             {
-                affected = await ExecuteAsync(sql, ("now", Utc(now)), ("throttleBefore", Utc(throttleBefore)), ("batch", batchSize));
+                affected = await ExecuteAsync(sql, ("now", Utc(now)), ("throttleBefore", Utc(throttleBefore)), ("dailyThrottleBefore", Utc(dailyThrottleBefore)), ("batch", batchSize));
                 deleted += affected;
             } while (affected == batchSize);
         }

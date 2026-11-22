@@ -21,12 +21,15 @@ public sealed class LoginProtectionService
     public const int EmailChangesPerHour = 3;
     public const string PasswordChecksScope = "password-checks";
     public const int PasswordChecksPerHour = 5;
+    public const string PasswordChecksDayScope = "password-checks-day";
+    public const int PasswordChecksPerDay = 10;
     public const int NoticesPerUserPerHour = 5;
     public const int CleanupBatchSize = 5000;
 
     private static readonly TimeSpan ChallengeSendWindow = TimeSpan.FromHours(1);
     private static readonly TimeSpan EmailChangeWindow = TimeSpan.FromHours(1);
     private static readonly TimeSpan PasswordCheckWindow = TimeSpan.FromHours(1);
+    private static readonly TimeSpan PasswordCheckDayWindow = TimeSpan.FromHours(12);
     private static readonly TimeSpan TurkeyUtcOffset = TimeSpan.FromHours(3);
 
     private readonly ILoginProtectionStore _store;
@@ -112,7 +115,9 @@ public sealed class LoginProtectionService
         {
             _logger.LogError(ex, "login_protection_store_failed Step=enter UserId={UserId} Mode={Mode} falling back to in-memory limits", userId, _options.Mode);
             if (!Enforcing) return LoginGate.Open;
-            return _fallback.RecordAttempt(userId, source, _options.SourceWindow, now) > _options.SourceFailureLimit
+            var sourceOver = _fallback.RecordAttempt(userId, source, _options.SourceWindow, now) > _options.SourceFailureLimit;
+            var accountOver = _fallback.RecordAttempt(userId, AccountUntrustedScope, _options.AccountWindow, now) > _options.AccountFailureLimit;
+            return sourceOver || accountOver
                 ? new LoginGate(LoginGateKind.Unavailable, "fallback")
                 : LoginGate.Open;
         }
@@ -207,17 +212,24 @@ public sealed class LoginProtectionService
 
     public async Task<bool> TryClaimPasswordCheckAsync(string userId)
     {
-        var window = WindowStart(_clock.UtcNow, PasswordCheckWindow);
+        var now = _clock.UtcNow;
+        var window = WindowStart(now, PasswordCheckWindow);
+        var dayWindow = WindowStart(now, PasswordCheckDayWindow);
         var current = await _store.IncrementAsync(userId, PasswordChecksScope, window);
         var previous = await _store.CountAsync(userId, PasswordChecksScope, window - PasswordCheckWindow);
-        return current + previous <= PasswordChecksPerHour;
+        if (current + previous > PasswordChecksPerHour) return false;
+        var currentDay = await _store.IncrementAsync(userId, PasswordChecksDayScope, dayWindow);
+        var previousDay = await _store.CountAsync(userId, PasswordChecksDayScope, dayWindow - PasswordCheckDayWindow);
+        return currentDay + previousDay <= PasswordChecksPerDay;
     }
 
     public Task<int> CleanupAsync()
     {
         var now = _clock.UtcNow;
         var longestWindow = new[] { _options.SourceWindow, _options.AccountWindow, _options.DeviceWindow, _options.StepUpFailureWindow, ChallengeSendWindow, EmailChangeWindow, PasswordCheckWindow }.Max();
-        return _store.CleanupAsync(now, WindowStart(now, longestWindow) - longestWindow, CleanupBatchSize);
+        var throttleBefore = WindowStart(now, longestWindow) - longestWindow;
+        var dailyThrottleBefore = WindowStart(now, PasswordCheckDayWindow) - PasswordCheckDayWindow;
+        return _store.CleanupAsync(now, throttleBefore, dailyThrottleBefore < throttleBefore ? dailyThrottleBefore : throttleBefore, CleanupBatchSize);
     }
 
     public async Task SendCodeAsync(string userId, string email, Guid challengeId, DateTimeOffset? lastSentAt)

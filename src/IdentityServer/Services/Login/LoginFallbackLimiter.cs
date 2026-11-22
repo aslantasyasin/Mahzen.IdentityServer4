@@ -21,7 +21,7 @@ public sealed class LoginFallbackLimiter : IDisposable
                 ? current with { Count = current.Count + 1 }
                 : new Entry(1, now + window);
             _cache.Set(key, entry, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = entry.ExpiresAt - now });
-            return entry.Count;
+            return _cache.TryGetValue(key, out Entry _) ? entry.Count : int.MaxValue;
         }
     }
 

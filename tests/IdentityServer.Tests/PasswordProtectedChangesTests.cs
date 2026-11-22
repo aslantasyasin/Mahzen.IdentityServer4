@@ -249,6 +249,48 @@ public class PasswordProtectedChangesTests
         Assert.Equal(LoginProtectionService.PasswordChecksPerHour, _users.PasswordChecks);
     }
 
+    private async Task SpendTheDailyLimitInTwoHourlyBursts()
+    {
+        _clock.UtcNow = new DateTimeOffset(2026, 11, 22, 10, 0, 0, TimeSpan.Zero);
+        for (var i = 0; i < LoginProtectionService.PasswordChecksPerHour; i++)
+            await ChangePassword("YanlisSifre1!");
+        _clock.UtcNow = new DateTimeOffset(2026, 11, 22, 12, 30, 0, TimeSpan.Zero);
+        for (var i = 0; i < LoginProtectionService.PasswordChecksPerDay - LoginProtectionService.PasswordChecksPerHour; i++)
+            await ChangePassword("YanlisSifre1!");
+        _clock.UtcNow = new DateTimeOffset(2026, 11, 22, 14, 30, 0, TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task The_daily_limit_holds_after_the_hourly_limit_has_reset()
+    {
+        await SpendTheDailyLimitInTwoHourlyBursts();
+
+        Assert.Contains("TooManyPasswordChecks", (await ChangePassword(Password)).Errors);
+        Assert.Equal(LoginProtectionService.PasswordChecksPerDay, _users.PasswordChecks);
+    }
+
+    [Fact]
+    public async Task Attempts_refused_by_the_hourly_limit_do_not_use_up_the_daily_limit()
+    {
+        _clock.UtcNow = new DateTimeOffset(2026, 11, 22, 10, 0, 0, TimeSpan.Zero);
+        for (var i = 0; i < LoginProtectionService.PasswordChecksPerDay; i++)
+            await ChangePassword("YanlisSifre1!");
+
+        _clock.UtcNow = new DateTimeOffset(2026, 11, 22, 12, 30, 0, TimeSpan.Zero);
+
+        Assert.False((await ChangePassword(Password)).HasError);
+    }
+
+    [Fact]
+    public async Task A_password_reset_lifts_the_daily_limit()
+    {
+        await SpendTheDailyLimitInTwoHourlyBursts();
+
+        await _protection.ResetUserAsync(UserId, "password_reset");
+
+        Assert.False((await ChangePassword(Password)).HasError);
+    }
+
     [Fact]
     public async Task The_limit_does_not_reset_at_the_top_of_the_hour()
     {

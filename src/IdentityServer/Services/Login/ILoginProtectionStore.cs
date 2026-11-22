@@ -39,5 +39,5 @@ public interface ILoginProtectionStore
 
     Task ResetUserAsync(string userId, DateTimeOffset now, string reason);
 
-    Task<int> CleanupAsync(DateTimeOffset now, DateTimeOffset throttleBefore, int batchSize);
+    Task<int> CleanupAsync(DateTimeOffset now, DateTimeOffset throttleBefore, DateTimeOffset dailyThrottleBefore, int batchSize);
 }

@@ -226,10 +226,12 @@ public class LoginProtectionServiceTests
         }
 
         public DateTimeOffset? LastCleanupThrottleBefore { get; private set; }
+        public DateTimeOffset? LastCleanupDailyThrottleBefore { get; private set; }
 
-        public Task<int> CleanupAsync(DateTimeOffset now, DateTimeOffset throttleBefore, int batchSize)
+        public Task<int> CleanupAsync(DateTimeOffset now, DateTimeOffset throttleBefore, DateTimeOffset dailyThrottleBefore, int batchSize)
         {
             LastCleanupThrottleBefore = throttleBefore;
+            LastCleanupDailyThrottleBefore = dailyThrottleBefore;
             return Task.FromResult(0);
         }
     }
@@ -796,6 +798,19 @@ public class LoginProtectionServiceTests
     }
 
     [Fact]
+    public async Task A_broken_store_caps_one_account_across_many_sources()
+    {
+        _store.Broken = true;
+        var service = Service();
+        for (var i = 0; i < new LoginProtectionOptions().AccountFailureLimit; i++)
+            Assert.Equal(LoginOutcomeKind.Rejected, (await Login(service, false, source: $"client:ip_{i}")).Kind);
+
+        Assert.Equal(LoginOutcomeKind.TemporarilyUnavailable, (await Login(service, true, source: "client:ip_new")).Kind);
+        Assert.Equal(LoginOutcomeKind.TemporarilyUnavailable, (await Login(service, false, source: "client:ip_new2")).Kind);
+        Assert.Equal(LoginOutcomeKind.Allowed, (await Login(service, true, source: "client:ip_new", user: "someone-else")).Kind);
+    }
+
+    [Fact]
     public async Task The_in_memory_fallback_window_is_fixed_and_reopens()
     {
         _store.Broken = true;
@@ -803,7 +818,7 @@ public class LoginProtectionServiceTests
         for (var i = 0; i < 6; i++) await Login(service, false);
         Assert.Equal(LoginOutcomeKind.TemporarilyUnavailable, (await Login(service, true)).Kind);
 
-        for (var m = 1; m <= 15; m++)
+        for (var m = 3; m <= 15; m += 3)
         {
             _clock.UtcNow = Start.AddMinutes(m);
             await Login(service, false);
@@ -871,11 +886,23 @@ public class LoginProtectionServiceTests
     }
 
     [Fact]
+    public async Task Cleanup_never_removes_a_live_window_when_a_window_outlasts_the_daily_one()
+    {
+        var service = new LoginProtectionService(_store, _mail, _work, _fallback,
+            Options.Create(new LoginProtectionOptions { Mode = LoginProtectionMode.Enforce, AccountWindow = TimeSpan.FromHours(24) }), _log, _clock);
+
+        await service.CleanupAsync();
+
+        Assert.True(_store.LastCleanupDailyThrottleBefore <= _store.LastCleanupThrottleBefore);
+    }
+
+    [Fact]
     public async Task Cleanup_keeps_every_live_window()
     {
         await Service().CleanupAsync();
 
         Assert.Equal(new DateTimeOffset(2026, 11, 21, 9, 0, 0, TimeSpan.Zero), _store.LastCleanupThrottleBefore);
+        Assert.Equal(new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero), _store.LastCleanupDailyThrottleBefore);
     }
 
     [Theory]
