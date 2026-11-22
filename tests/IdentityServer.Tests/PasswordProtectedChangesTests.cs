@@ -42,6 +42,7 @@ public class PasswordProtectedChangesTests
         public int PasswordChecks;
         public (DateTimeOffset? LockoutEnd, int AccessFailedCount, bool EmailConfirmed)? Saved;
         public bool FailToSave;
+        public DateTimeOffset? SavedPasswordChangedAt;
 
         public Users() : base(new NoStore(), null!, null!, null!, null!, null!, null!, null!, null!) { }
 
@@ -74,6 +75,7 @@ public class PasswordProtectedChangesTests
         {
             if (FailToSave) throw new InvalidOperationException(InternalDetail);
             Saved = (user.LockoutEnd, user.AccessFailedCount, user.EmailConfirmed);
+            SavedPasswordChangedAt = user.PasswordChangedAt;
             return Task.FromResult(IdentityResult.Success);
         }
     }
@@ -276,6 +278,34 @@ public class PasswordProtectedChangesTests
 
         Assert.False(result.HasError, string.Join(" | ", result.Errors));
         Assert.Equal((null, 0, true), _users.Saved);
+    }
+
+    [Fact]
+    public async Task A_password_change_records_when_it_happened()
+    {
+        var before = DateTimeOffset.UtcNow;
+
+        await ChangePassword(Password);
+
+        Assert.InRange(_users.SavedPasswordChangedAt!.Value, before, DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task A_wrong_current_password_records_no_change_time()
+    {
+        await ChangePassword("YanlisSifre1!");
+
+        Assert.Null(_users.SavedPasswordChangedAt);
+    }
+
+    [Fact]
+    public async Task A_password_reset_records_when_it_happened()
+    {
+        var before = DateTimeOffset.UtcNow;
+
+        await Service().ResetPasswordByServiceAsync(UserId, "YeniSifre123!");
+
+        Assert.InRange(_users.SavedPasswordChangedAt!.Value, before, DateTimeOffset.UtcNow);
     }
 
     [Fact]

@@ -603,6 +603,7 @@ namespace IdentityServer.Services.User
 
                 user.LockoutEnd = null;
                 user.AccessFailedCount = 0;
+                user.PasswordChangedAt = DateTimeOffset.UtcNow;
                 IdentityResult result = await _userManager.ChangePasswordAsync(user, currentPassword, newPassword);
 
                 if (result.Succeeded)
@@ -613,7 +614,7 @@ namespace IdentityServer.Services.User
                     }
                     catch (Exception grantEx)
                     {
-                        _logger.LogError(grantEx, "password_change_sessions_not_revoked UserId={UserId} the password changed but old refresh tokens may still work; revoke them by hand", userId);
+                        _logger.LogWarning(grantEx, "password_change_sessions_not_revoked UserId={UserId} old refresh grants stay in the table; sessions older than the change are refused on refresh", userId);
                     }
                     await _loginProtection.ResetUserAsync(userId, "password_change");
                     // Şifre değişikliğini logla (şifreleri kaydetme, sadece bilgi)
@@ -727,6 +728,7 @@ namespace IdentityServer.Services.User
                 user.EmailConfirmed = true;
                 user.LockoutEnd = null;
                 user.AccessFailedCount = 0;
+                user.PasswordChangedAt = DateTimeOffset.UtcNow;
                 var result = await _userManager.ResetPasswordAsync(user, resetToken, newPassword);
 
                 if (!result.Succeeded)
@@ -750,11 +752,8 @@ namespace IdentityServer.Services.User
                 }
                 catch (Exception grantEx)
                 {
-                    // İstek başarısız SAYILMIYOR: şifre bu noktada gerçekten değişti ve
-                    // geri alınamaz. Kullanıcıya "olmadı" demek yanlış olur. Ama bu,
-                    // elle müdahale gerektiren bir durum: eski oturumlar hâlâ açık.
-                    _logger.LogError(grantEx,
-                        "password_reset_sessions_not_revoked UserId={UserId} the password was reset but old refresh tokens may still work; revoke them by hand",
+                    _logger.LogWarning(grantEx,
+                        "password_reset_sessions_not_revoked UserId={UserId} old refresh grants stay in the table; sessions older than the reset are refused on refresh",
                         userId);
                 }
 
