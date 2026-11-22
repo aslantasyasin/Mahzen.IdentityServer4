@@ -41,6 +41,7 @@ public class PasswordProtectedChangesTests
         public readonly ApplicationUser Customer = new() { Id = UserId, UserName = "ali@ornek.com", Email = "ali@ornek.com", IsActive = true };
         public int EmailChanges;
         public int PasswordChecks;
+        public (DateTimeOffset? LockoutEnd, int AccessFailedCount, bool EmailConfirmed)? Saved;
         public bool FailToSave;
 
         public Users() : base(new NoStore(), null!, null!, null!, null!, null!, null!, null!, null!) { }
@@ -55,9 +56,9 @@ public class PasswordProtectedChangesTests
         {
             Interlocked.Increment(ref PasswordChecks);
             if (FailToSave) throw new InvalidOperationException(InternalDetail);
-            return Task.FromResult(currentPassword == Password
-                ? IdentityResult.Success
-                : IdentityResult.Failed(new IdentityError { Code = "PasswordMismatch" }));
+            if (currentPassword != Password)
+                return Task.FromResult(IdentityResult.Failed(new IdentityError { Code = "PasswordMismatch" }));
+            return UpdateAsync(user);
         }
         public override Task<ApplicationUser> FindByEmailAsync(string email) =>
             Task.FromResult(email == TakenEmail ? new ApplicationUser { Id = "user-2", Email = TakenEmail } : null!);
@@ -68,24 +69,34 @@ public class PasswordProtectedChangesTests
             user.Email = newEmail;
             return Task.FromResult(IdentityResult.Success);
         }
-        public override Task<IdentityResult> UpdateAsync(ApplicationUser user) =>
-            FailToSave ? throw new InvalidOperationException(InternalDetail) : Task.FromResult(IdentityResult.Success);
+        public override Task<string> GeneratePasswordResetTokenAsync(ApplicationUser user) => Task.FromResult("reset");
+        public override Task<IdentityResult> ResetPasswordAsync(ApplicationUser user, string token, string newPassword) => UpdateAsync(user);
+        public override Task<IdentityResult> UpdateAsync(ApplicationUser user)
+        {
+            if (FailToSave) throw new InvalidOperationException(InternalDetail);
+            Saved = (user.LockoutEnd, user.AccessFailedCount, user.EmailConfirmed);
+            return Task.FromResult(IdentityResult.Success);
+        }
     }
 
     internal sealed class RecordingLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
     {
         public readonly List<Exception?> Errors = new();
+        public readonly List<string> Messages = new();
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             if (logLevel == Microsoft.Extensions.Logging.LogLevel.Error) Errors.Add(exception);
+            if (logLevel >= Microsoft.Extensions.Logging.LogLevel.Warning) Messages.Add(formatter(state, exception));
         }
     }
 
     private sealed class NoChangeLog : IUserChangeLogService
     {
-        public Task LogChangeAsync(string userId, string fieldName, string oldValue, string newValue, string changedBy) => Task.CompletedTask;
+        public bool Fails;
+        public Task LogChangeAsync(string userId, string fieldName, string oldValue, string newValue, string changedBy) =>
+            Fails ? throw new InvalidOperationException(InternalDetail) : Task.CompletedTask;
     }
 
     private sealed class Mailer : ILoginMailer
@@ -110,6 +121,7 @@ public class PasswordProtectedChangesTests
     private readonly Users _users = new();
     private readonly Mailer _mailer = new();
     private readonly RecordingLogger<UserService> _log = new();
+    private readonly NoChangeLog _changeLog = new();
     private readonly LoginProtectionServiceTests.MemoryStore _store = new();
     private readonly LoginProtectionService _protection;
 
@@ -133,7 +145,7 @@ public class PasswordProtectedChangesTests
             .AddSingleton<IHttpContextAccessor>(new HttpContextAccessor { HttpContext = context })
             .BuildServiceProvider()
             .GetRequiredService<IServiceScopeFactory>();
-        return new UserService(_users, null!, scopes, null!, null!, null!, new NoChangeLog(), null!,
+        return new UserService(_users, null!, scopes, null!, null!, null!, _changeLog, null!,
             _log, null!, _protection, _mailer);
     }
 
@@ -233,6 +245,51 @@ public class PasswordProtectedChangesTests
 
         Assert.True((await ChangePassword(Password)).HasError);
         Assert.Equal(LoginProtectionService.PasswordChecksPerHour, _users.PasswordChecks);
+    }
+
+    private void LockCustomer()
+    {
+        _users.Customer.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(5);
+        _users.Customer.AccessFailedCount = 5;
+        _users.Customer.EmailConfirmed = false;
+    }
+
+    [Fact]
+    public async Task A_password_reset_also_lifts_the_login_lockout_and_confirms_the_email()
+    {
+        LockCustomer();
+
+        var result = await Service().ResetPasswordByServiceAsync(UserId, "YeniSifre123!");
+
+        Assert.False(result.HasError, string.Join(" | ", result.Errors));
+        Assert.Equal((null, 0, true), _users.Saved);
+    }
+
+    [Fact]
+    public async Task A_failed_change_log_does_not_report_a_done_reset_or_change_as_failed()
+    {
+        for (var i = 0; i < LoginProtectionService.PasswordChecksPerHour - 1; i++)
+            await ChangePassword("YanlisSifre1!");
+        _changeLog.Fails = true;
+
+        var changed = await ChangePassword(Password);
+        var reset = await Service().ResetPasswordByServiceAsync(UserId, "YeniSifre123!");
+
+        Assert.True(changed.Data);
+        Assert.True(reset.Data);
+        Assert.Equal(2, _log.Messages.Count(m => m.StartsWith("user_change_log_failed")));
+        Assert.DoesNotContain(_store.Counts.Keys, k => k.Scope == LoginProtectionService.PasswordChecksScope);
+    }
+
+    [Fact]
+    public async Task A_password_change_also_lifts_the_login_lockout()
+    {
+        LockCustomer();
+
+        var result = await ChangePassword(Password);
+
+        Assert.False(result.HasError, string.Join(" | ", result.Errors));
+        Assert.Equal((null, 0, false), _users.Saved);
     }
 
     [Fact]

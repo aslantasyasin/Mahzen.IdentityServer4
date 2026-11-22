@@ -88,6 +88,63 @@ public class UpdateEmailPostgresTests
     }
 
     [Fact]
+    public async Task A_password_reset_unlocks_an_account_locked_by_wrong_logins()
+    {
+        var connectionString = Environment.GetEnvironmentVariable(ConnectionVariable);
+        if (string.IsNullOrEmpty(connectionString)) return;
+
+        var (provider, userId) = await Setup(connectionString);
+        using var scope = provider.CreateScope();
+        var (service, _) = Build(scope.ServiceProvider);
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var signIn = scope.ServiceProvider.GetRequiredService<SignInManager<ApplicationUser>>();
+        var user = await users.FindByIdAsync(userId);
+        var maxFailures = scope.ServiceProvider.GetRequiredService<IOptions<IdentityOptions>>().Value.Lockout.MaxFailedAccessAttempts;
+        for (var i = 0; i < maxFailures; i++)
+            await signIn.CheckPasswordSignInAsync(user, "YanlisSifre1!", lockoutOnFailure: true);
+        Assert.True(await users.IsLockedOutAsync(user));
+
+        var result = await service.ResetPasswordByServiceAsync(userId, "YeniSifre123!");
+
+        Assert.False(result.HasError, string.Join(" | ", result.Errors));
+        await AssertUnlockedInDatabase(provider, userId, "YeniSifre123!");
+    }
+
+    [Fact]
+    public async Task A_password_change_unlocks_the_account_in_the_same_write()
+    {
+        var connectionString = Environment.GetEnvironmentVariable(ConnectionVariable);
+        if (string.IsNullOrEmpty(connectionString)) return;
+
+        var (provider, userId) = await Setup(connectionString);
+        using (var lockScope = provider.CreateScope())
+        {
+            var users = lockScope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var user = await users.FindByIdAsync(userId);
+            Assert.True((await users.SetLockoutEndDateAsync(user, DateTimeOffset.UtcNow.AddMinutes(5))).Succeeded);
+            Assert.True((await users.AccessFailedAsync(user)).Succeeded);
+            Assert.True(await users.IsLockedOutAsync(user));
+        }
+        using var scope = provider.CreateScope();
+        var (service, _) = Build(scope.ServiceProvider);
+
+        var result = await service.ChangePasswordAsync(userId, Password, "YeniSifre123!");
+
+        Assert.False(result.HasError, string.Join(" | ", result.Errors));
+        await AssertUnlockedInDatabase(provider, userId, "YeniSifre123!");
+    }
+
+    private static async Task AssertUnlockedInDatabase(ServiceProvider provider, string userId, string password)
+    {
+        using var fresh = provider.CreateScope();
+        var users = fresh.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await users.FindByIdAsync(userId);
+        Assert.False(await users.IsLockedOutAsync(user));
+        Assert.Equal(0, await users.GetAccessFailedCountAsync(user));
+        Assert.True(await users.CheckPasswordAsync(user, password));
+    }
+
+    [Fact]
     public async Task Changing_the_password_runs_the_counters_and_the_reset()
     {
         var connectionString = Environment.GetEnvironmentVariable(ConnectionVariable);

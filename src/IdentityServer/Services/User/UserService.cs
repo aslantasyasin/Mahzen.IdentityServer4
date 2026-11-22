@@ -601,13 +601,22 @@ namespace IdentityServer.Services.User
                     return ApiResponse<bool>.Fail(TooManyPasswordChecks);
                 }
 
+                user.LockoutEnd = null;
+                user.AccessFailedCount = 0;
                 IdentityResult result = await _userManager.ChangePasswordAsync(user, currentPassword, newPassword);
 
                 if (result.Succeeded)
                 {
-                    // Şifre değişikliğini logla (şifreleri kaydetme, sadece bilgi)
-                    await _userChangeLogService.LogChangeAsync(userId, "Password", "***", "***", _userInfo.UserId);
                     await _loginProtection.ResetUserAsync(userId, "password_change");
+                    // Şifre değişikliğini logla (şifreleri kaydetme, sadece bilgi)
+                    try
+                    {
+                        await _userChangeLogService.LogChangeAsync(userId, "Password", "***", "***", _userInfo.UserId);
+                    }
+                    catch (Exception logEx)
+                    {
+                        _logger.LogError(logEx, "user_change_log_failed Operation={Operation} UserId={UserId}", nameof(ChangePasswordAsync), userId);
+                    }
                     response.Data = true;
                 }
                 else
@@ -704,6 +713,12 @@ namespace IdentityServer.Services.User
                 // doğruladığı e-posta kodu; buradaki token yalnızca Identity'nin
                 // kendi ResetPasswordAsync sözleşmesini karşılamak için var.
                 var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+                // Sıfırlama, kullanıcının o posta kutusuna erişimini kanıtladı — yani
+                // e-posta doğrulamanın kanıtladığı şeyin aynısını. Onaysız hesap
+                // burada kendiliğinden kapanıyor.
+                user.EmailConfirmed = true;
+                user.LockoutEnd = null;
+                user.AccessFailedCount = 0;
                 var result = await _userManager.ResetPasswordAsync(user, resetToken, newPassword);
 
                 if (!result.Succeeded)
@@ -713,25 +728,6 @@ namespace IdentityServer.Services.User
                     foreach (var err in result.Errors)
                         response.Errors.Add(err.Code);
                     return response;
-                }
-
-                // Sıfırlama, kullanıcının o posta kutusuna erişimini kanıtladı — yani
-                // e-posta doğrulamanın kanıtladığı şeyin aynısını. Onaysız hesap
-                // burada kendiliğinden kapanıyor.
-                if (!user.EmailConfirmed)
-                {
-                    user.EmailConfirmed = true;
-                    var confirmResult = await _userManager.UpdateAsync(user);
-                    if (!confirmResult.Succeeded)
-                    {
-                        // Yutulan ama loglanan hata: şifre değişti, yalnızca onay bayrağı
-                        // yazılamadı. İsteği başarısız saymak kullanıcıya YANLIŞ sonuç
-                        // bildirmek olurdu (şifresi gerçekten değişti). Elle onarım için
-                        // gereken her şey logda (md. 13).
-                        _logger.LogError(
-                            "Şifre sıfırlandı fakat EmailConfirmed yazılamadı. UserId={UserId} Hatalar={Errors}",
-                            userId, string.Join(",", confirmResult.Errors.Select(e => e.Code)));
-                    }
                 }
 
                 // Canlı oturumlar düşmeli. ResetPasswordAsync security stamp'i yeniliyor,
@@ -757,7 +753,14 @@ namespace IdentityServer.Services.User
 
                 await _loginProtection.ResetUserAsync(userId, "password_reset");
 
-                await _userChangeLogService.LogChangeAsync(userId, "PasswordReset", "***", "***", userId);
+                try
+                {
+                    await _userChangeLogService.LogChangeAsync(userId, "PasswordReset", "***", "***", userId);
+                }
+                catch (Exception logEx)
+                {
+                    _logger.LogError(logEx, "user_change_log_failed Operation={Operation} UserId={UserId}", nameof(ResetPasswordByServiceAsync), userId);
+                }
                 _logger.LogInformation("Şifre sıfırlandı. UserId={UserId}", userId);
 
                 response.Data = true;
