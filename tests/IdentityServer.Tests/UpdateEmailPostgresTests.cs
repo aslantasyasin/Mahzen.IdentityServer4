@@ -108,6 +108,7 @@ public class UpdateEmailPostgresTests
 
         Assert.False(result.HasError, string.Join(" | ", result.Errors));
         await AssertUnlockedInDatabase(provider, userId, "YeniSifre123!");
+        Assert.Equal(1, await ChangeLogCount(provider, userId, "PasswordReset"));
     }
 
     [Fact]
@@ -132,6 +133,14 @@ public class UpdateEmailPostgresTests
 
         Assert.False(result.HasError, string.Join(" | ", result.Errors));
         await AssertUnlockedInDatabase(provider, userId, "YeniSifre123!");
+        Assert.Equal(1, await ChangeLogCount(provider, userId, "Password"));
+    }
+
+    private static async Task<int> ChangeLogCount(ServiceProvider provider, string userId, string fieldName)
+    {
+        using var fresh = provider.CreateScope();
+        return await fresh.ServiceProvider.GetRequiredService<CustomDbContext>().UserChangeLogs
+            .CountAsync(l => l.UserId == userId && l.FieldName == fieldName && l.OldValue == "***" && l.NewValue == "***");
     }
 
     private static async Task AssertUnlockedInDatabase(ServiceProvider provider, string userId, string password)

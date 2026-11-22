@@ -19,9 +19,6 @@ namespace IdentityServer.Services.User
 
         public async Task LogChangeAsync(string userId, string fieldName, string oldValue, string newValue, string changedBy)
         {
-            if (oldValue == newValue)
-                return;
-
             var log = new UserChangeLog
             {
                 UserId = userId,
