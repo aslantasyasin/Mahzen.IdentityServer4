@@ -2,6 +2,7 @@ using System.Collections.Specialized;
 using System.Security.Claims;
 using IdentityServer.Models;
 using IdentityServer.Services.Login;
+using IdentityServer.Services.Profil;
 using IdentityServer.Validators;
 using IdentityServer4.Models;
 using IdentityServer4.Validation;
@@ -39,6 +40,10 @@ public class PasswordValidatorTests
         public string[] UserTypes { get; set; } = { "B2C" };
         public string[] Roles { get; set; } = { "Customer" };
         public bool PasswordOk { get; set; } = true;
+        public bool LockedOut { get; set; }
+
+        public override Task<bool> IsLockedOutAsync(ApplicationUser user) => Task.FromResult(LockedOut);
+        public override Task<ApplicationUser> GetUserAsync(ClaimsPrincipal principal) => Task.FromResult(User);
 
         public override Task<bool> CheckPasswordAsync(ApplicationUser user, string password) => Task.FromResult(PasswordOk);
 
@@ -85,6 +90,8 @@ public class PasswordValidatorTests
     private readonly LoginProtectionServiceTests.RecordingMailer _mail = new();
     private readonly FakeUserManager _users = new();
 
+    private LoginProtectionService _protection = null!;
+
     private (CustomResourceOwnerPasswordValidator Validator, FakeSignInManager SignIn) Create(LoginProtectionMode mode)
     {
         var signIn = new FakeSignInManager(_users);
@@ -92,6 +99,7 @@ public class PasswordValidatorTests
         var protection = new LoginProtectionService(_store, _mail, work, new LoginFallbackLimiter(), Options.Create(new LoginProtectionOptions { Mode = mode }),
             NullLogger<LoginProtectionService>.Instance, new FixedClock());
         work.Service = protection;
+        _protection = protection;
         var http = new HttpContextAccessor { HttpContext = new DefaultHttpContext { Connection = { RemoteIpAddress = System.Net.IPAddress.Parse("10.0.0.7") } } };
         var validator = new CustomResourceOwnerPasswordValidator(signIn, _users, protection, http,
             new ConfigurationBuilder().Build(), NullLogger<CustomResourceOwnerPasswordValidator>.Instance);
@@ -270,6 +278,23 @@ public class PasswordValidatorTests
         Assert.Equal(CustomResourceOwnerPasswordValidator.InvalidCredentialsDescription, context.Result.ErrorDescription);
         Assert.Empty(_mail.Sent);
         Assert.Empty(_store.Devices);
+    }
+
+    [Fact]
+    public async Task Enforce_ignores_the_identity_lockout_in_the_token_request_and_in_the_session_check()
+    {
+        _users.LockedOut = true;
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
+        var context = Context();
+
+        await validator.ValidateAsync(context);
+
+        Assert.False(context.Result.IsError);
+        var session = new ClaimsPrincipal(new ClaimsIdentity(
+            context.Result.Subject.Claims.Append(new Claim("auth_time", PasswordChangedAt.AddSeconds(1).ToUnixTimeSeconds().ToString())), "test"));
+        var active = new IsActiveContext(session, new Client(), "test");
+        await new CustomProfileService(_users, _protection).IsActiveAsync(active);
+        Assert.True(active.IsActive);
     }
 
     [Theory]

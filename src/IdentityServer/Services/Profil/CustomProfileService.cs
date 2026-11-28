@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Threading.Tasks;
 using IdentityModel;
 using IdentityServer.Models;
+using IdentityServer.Services.Login;
 using IdentityServer4;
 using IdentityServer4.Models;
 using IdentityServer4.Services;
@@ -20,9 +21,12 @@ public class CustomProfileService : IProfileService
 
     private readonly UserManager<ApplicationUser> _userManager;
 
-    public CustomProfileService(UserManager<ApplicationUser> userManager)
+    private readonly LoginProtectionService _loginProtection;
+
+    public CustomProfileService(UserManager<ApplicationUser> userManager, LoginProtectionService loginProtection)
     {
         _userManager = userManager;
+        _loginProtection = loginProtection;
     }
 
     public async Task GetProfileDataAsync(ProfileDataRequestContext context)
@@ -85,7 +89,7 @@ public class CustomProfileService : IProfileService
         }
 
         // Hesap kilitli mi?
-        if (await _userManager.IsLockedOutAsync(user))
+        if (!_loginProtection.Enforcing && await _userManager.IsLockedOutAsync(user))
         {
             context.IsActive = false;
             return;

@@ -1,9 +1,12 @@
 using System.Security.Claims;
 using IdentityModel;
 using IdentityServer.Models;
+using IdentityServer.Services.Login;
 using IdentityServer.Services.Profil;
 using IdentityServer4.Models;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace IdentityServer.Tests;
 
@@ -38,13 +41,27 @@ public class ProfileIsActiveTests
         public override Task<IList<string>> GetRolesAsync(ApplicationUser user) => Task.FromResult<IList<string>>(new List<string>());
     }
 
-    private static async Task<bool> IsActive(Users users, long? authTime, string? passwordVersion = null)
+    private sealed class FixedClock : Microsoft.AspNetCore.Authentication.ISystemClock
+    {
+        public DateTimeOffset UtcNow => ChangedAt;
+    }
+
+    private static CustomProfileService Service(Users users, LoginProtectionMode mode = LoginProtectionMode.Shadow)
+    {
+        var work = new LoginProtectionServiceTests.ImmediateWork();
+        var protection = new LoginProtectionService(new LoginProtectionServiceTests.MemoryStore(), new LoginProtectionServiceTests.RecordingMailer(), work,
+            new LoginFallbackLimiter(), Options.Create(new LoginProtectionOptions { Mode = mode }), NullLogger<LoginProtectionService>.Instance, new FixedClock());
+        work.Service = protection;
+        return new CustomProfileService(users, protection);
+    }
+
+    private static async Task<bool> IsActive(Users users, long? authTime, string? passwordVersion = null, LoginProtectionMode mode = LoginProtectionMode.Shadow)
     {
         var claims = new List<Claim> { new(JwtClaimTypes.Subject, "user-1") };
         if (authTime is { } t) claims.Add(new Claim(JwtClaimTypes.AuthenticationTime, t.ToString()));
         if (passwordVersion is not null) claims.Add(new Claim(CustomProfileService.PasswordVersionClaim, passwordVersion));
         var context = new IsActiveContext(new ClaimsPrincipal(new ClaimsIdentity(claims, "test")), new Client(), "test");
-        await new CustomProfileService(users).IsActiveAsync(context);
+        await Service(users, mode).IsActiveAsync(context);
         return context.IsActive;
     }
 
@@ -89,6 +106,10 @@ public class ProfileIsActiveTests
         Assert.False(await IsActive(new Users { LockedOut = true }, authTime: null));
 
     [Fact]
+    public async Task Enforce_ignores_the_identity_lockout_so_the_token_and_the_session_agree() =>
+        Assert.True(await IsActive(new Users { LockedOut = true }, authTime: null, mode: LoginProtectionMode.Enforce));
+
+    [Fact]
     public async Task An_inactive_user_is_not_active() =>
         Assert.False(await IsActive(new Users { User = { IsActive = false } }, authTime: null));
 
@@ -120,7 +141,7 @@ public class ProfileIsActiveTests
         }, "test"));
         var context = new ProfileDataRequestContext(subject, new Client(), caller, new string[0]);
 
-        await new CustomProfileService(new Users()).GetProfileDataAsync(context);
+        await Service(new Users()).GetProfileDataAsync(context);
 
         Assert.Equal(expected, context.IssuedClaims.Any(c => c.Type == CustomProfileService.PasswordVersionClaim && c.Value == "42"));
     }
