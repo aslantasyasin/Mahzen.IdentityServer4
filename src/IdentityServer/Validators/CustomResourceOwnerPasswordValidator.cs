@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading.Tasks;
 using IdentityServer.Models;
 using IdentityServer.Services.Login;
+using IdentityServer.Services.Profil;
 using IdentityServer4.Models;
 using IdentityServer4.Validation;
 using Microsoft.AspNetCore.Http;
@@ -70,6 +72,8 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
             .Select(c => c.Value)
             .ToHashSet();
         var typeAllowed = IsClientAllowed(userTypes, context.Request.Client);
+        var roles = await _userManager.GetRolesAsync(user);
+        var isAdmin = userTypes.Contains("Admin") || roles.Any(r => string.Equals(r, "Admin", StringComparison.OrdinalIgnoreCase));
 
         var source = LoginSource.Resolve(_httpContextAccessor.HttpContext, _configuration["Internal:ApiKey"]);
         var raw = context.Request.Raw;
@@ -97,15 +101,18 @@ public class CustomResourceOwnerPasswordValidator  : IResourceOwnerPasswordValid
         if (passwordOk && !typeAllowed)
             _logger.LogWarning("login_rejected_user_type UserId={UserId} ClientId={ClientId} UserTypes={UserTypes}",
                 user.Id, clientId, string.Join(',', userTypes));
+        if (passwordOk && !user.IsActive)
+            _logger.LogWarning("login_rejected_inactive UserId={UserId} ClientId={ClientId}", user.Id, clientId);
 
         var outcome = await _loginProtection.CompleteAsync(
-            new LoginAttempt(user.Id, user.Email, source, deviceId, userTypes.Contains("Admin"), raw?[StepUpIdParameter], raw?[StepUpCodeParameter]),
+            new LoginAttempt(user.Id, user.Email, source, deviceId, isAdmin, raw?[StepUpIdParameter], raw?[StepUpCodeParameter]),
             gate,
-            passwordOk && typeAllowed);
+            passwordOk && typeAllowed && user.IsActive);
 
         context.Result = outcome.Kind switch
         {
             LoginOutcomeKind.Allowed => new GrantValidationResult(subject: user.Id, authenticationMethod: "password",
+                claims: new[] { new Claim(CustomProfileService.PasswordVersionClaim, CustomProfileService.PasswordVersion(user)) },
                 customResponse: outcome.DeviceToken is null ? null : new Dictionary<string, object> { [DeviceTokenParameter] = outcome.DeviceToken }),
             LoginOutcomeKind.StepUpRequired => new GrantValidationResult(TokenRequestErrors.InvalidGrant, StepUpRequiredDescription,
                 new Dictionary<string, object> { [StepUpIdParameter] = outcome.ChallengeId!.Value.ToString() }),

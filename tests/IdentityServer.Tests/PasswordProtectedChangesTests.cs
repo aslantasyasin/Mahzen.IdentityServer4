@@ -15,6 +15,8 @@ namespace IdentityServer.Tests;
 public class PasswordProtectedChangesTests
 {
     private const string UserId = "user-1";
+    private const string OtherUserId = "user-3";
+    private const string AdminId = "admin-1";
     private const string Password = "DogruSifre1!";
     private const string TakenEmail = "dolu@ornek.com";
     private const string NewEmail = "yeni@ornek.com";
@@ -46,7 +48,9 @@ public class PasswordProtectedChangesTests
 
         public Users() : base(new NoStore(), null!, null!, null!, null!, null!, null!, null!, null!) { }
 
-        public override Task<ApplicationUser> FindByIdAsync(string userId) => Task.FromResult(userId == UserId ? Customer : null!);
+        public readonly ApplicationUser Other = new() { Id = OtherUserId, UserName = "veli@ornek.com", Email = "veli@ornek.com", IsActive = true };
+        public override Task<ApplicationUser> FindByIdAsync(string userId) =>
+            Task.FromResult(userId == UserId ? Customer : userId == OtherUserId ? Other : null!);
         public override Task<bool> CheckPasswordAsync(ApplicationUser user, string password)
         {
             Interlocked.Increment(ref PasswordChecks);
@@ -152,10 +156,10 @@ public class PasswordProtectedChangesTests
     private Task<IdentityServer.Models.Base.ApiResponse<bool>> Change(string email) =>
         Service().UpdateEmailAsync(new UpdateEmailRequestDto { Email = email, CurrentPassword = Password });
 
-    private UserService Service()
+    private UserService Service(string caller = UserId)
     {
         var context = new DefaultHttpContext();
-        context.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", UserId) }, "test"));
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", caller) }, "test"));
         var scopes = new ServiceCollection()
             .AddSingleton<IHttpContextAccessor>(new HttpContextAccessor { HttpContext = context })
             .BuildServiceProvider()
@@ -435,6 +439,64 @@ public class PasswordProtectedChangesTests
         Assert.Equal(new[] { IdentityServer.Models.Base.ApiErrors.Unexpected }, result.Errors);
         Assert.Contains(_log.Errors, ex => ex?.Message == InternalDetail);
         Assert.Empty(_mailer.Sent);
+    }
+
+    [Fact]
+    public async Task An_email_change_reports_a_protection_store_failure_instead_of_throwing()
+    {
+        _store.Broken = true;
+
+        var result = await Service().UpdateEmailAsync(new UpdateEmailRequestDto { Email = NewEmail, CurrentPassword = Password });
+
+        Assert.Equal(new[] { IdentityServer.Models.Base.ApiErrors.Unexpected }, result.Errors);
+        Assert.Contains(_log.Errors, ex => ex?.Message == "db down");
+        Assert.Equal(0, _users.EmailChanges);
+        Assert.Empty(_mailer.Sent);
+    }
+
+    [Fact]
+    public async Task Deactivating_a_user_ends_the_sessions_but_keeps_the_attack_state()
+    {
+        _store.Notices[(OtherUserId, "under-attack")] = _clock.UtcNow;
+
+        var result = await Service(AdminId).UpdateUserAsync(OtherUserId, new ApplicationUserUpdateRequestDto { IsActive = false });
+
+        Assert.True(result.Data);
+        Assert.False(_users.Other.IsActive);
+        Assert.Equal(new[] { OtherUserId }, _grants.RevokedSubjects);
+        Assert.True(_store.Notices.ContainsKey((OtherUserId, "under-attack")));
+    }
+
+    [Fact]
+    public async Task Saving_an_inactive_user_again_retries_ending_the_sessions()
+    {
+        _users.Other.IsActive = false;
+
+        var result = await Service(AdminId).UpdateUserAsync(OtherUserId, new ApplicationUserUpdateRequestDto { IsActive = false });
+
+        Assert.True(result.Data);
+        Assert.Equal(new[] { OtherUserId }, _grants.RevokedSubjects);
+    }
+
+    [Fact]
+    public async Task An_admin_cannot_deactivate_their_own_account()
+    {
+        var result = await Service().UpdateUserAsync(UserId, new ApplicationUserUpdateRequestDto { IsActive = false });
+
+        Assert.True(result.HasError);
+        Assert.True(_users.Customer.IsActive);
+        Assert.Empty(_grants.RevokedSubjects);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(null)]
+    public async Task An_update_that_keeps_the_user_active_leaves_the_sessions_alone(bool? isActive)
+    {
+        var result = await Service(AdminId).UpdateUserAsync(OtherUserId, new ApplicationUserUpdateRequestDto { IsActive = isActive, FirstName = "Ali" });
+
+        Assert.True(result.Data);
+        Assert.Empty(_grants.RevokedSubjects);
     }
 
     [Fact]

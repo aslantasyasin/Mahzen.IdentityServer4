@@ -16,7 +16,7 @@ namespace IdentityServer.Tests;
 
 public class PasswordValidatorTests
 {
-    private static readonly ApplicationUser Customer = new() { Id = "user-1", UserName = "ali@ornek.com", Email = "ali@ornek.com" };
+    private static readonly DateTimeOffset PasswordChangedAt = new(2026, 11, 20, 9, 30, 0, TimeSpan.Zero);
 
     private sealed class StubUserStore : IUserStore<ApplicationUser>
     {
@@ -35,14 +35,22 @@ public class PasswordValidatorTests
 
     private sealed class FakeUserManager : UserManager<ApplicationUser>
     {
+        public ApplicationUser User { get; } = new() { Id = "user-1", UserName = "ali@ornek.com", Email = "ali@ornek.com", IsActive = true, PasswordChangedAt = PasswordChangedAt };
         public string[] UserTypes { get; set; } = { "B2C" };
+        public string[] Roles { get; set; } = { "Customer" };
         public bool PasswordOk { get; set; } = true;
 
         public override Task<bool> CheckPasswordAsync(ApplicationUser user, string password) => Task.FromResult(PasswordOk);
 
         public FakeUserManager() : base(new StubUserStore(), null!, null!, null!, null!, null!, null!, null!, null!) { }
 
-        public override Task<ApplicationUser> FindByNameAsync(string userName) => Task.FromResult(userName == Customer.UserName ? Customer : null!);
+        public override Task<ApplicationUser> FindByNameAsync(string userName) => Task.FromResult(userName == User.UserName ? User : null!);
+        public int RoleLookups;
+        public override Task<IList<string>> GetRolesAsync(ApplicationUser user)
+        {
+            RoleLookups++;
+            return Task.FromResult<IList<string>>(Roles);
+        }
         public override Task<ApplicationUser> FindByEmailAsync(string email) => Task.FromResult<ApplicationUser>(null!);
         public override Task<IList<Claim>> GetClaimsAsync(ApplicationUser user) =>
             Task.FromResult<IList<Claim>>(UserTypes.Select(t => new Claim("user_type", t)).ToList());
@@ -90,13 +98,13 @@ public class PasswordValidatorTests
         return (validator, signIn);
     }
 
-    private static ResourceOwnerPasswordValidationContext Context(params (string Key, string Value)[] extra)
+    private ResourceOwnerPasswordValidationContext Context(params (string Key, string Value)[] extra)
     {
         var raw = new NameValueCollection();
         foreach (var (key, value) in extra) raw[key] = value;
         return new ResourceOwnerPasswordValidationContext
         {
-            UserName = Customer.UserName,
+            UserName = _users.User.UserName,
             Password = "secret",
             Request = new ValidatedTokenRequest
             {
@@ -248,5 +256,77 @@ public class PasswordValidatorTests
         Assert.Equal(CustomResourceOwnerPasswordValidator.InvalidCredentialsDescription, context.Result.ErrorDescription);
         Assert.Empty(_mail.Sent);
         Assert.Empty(_store.Devices);
+    }
+
+    [Fact]
+    public async Task An_inactive_user_with_the_right_password_looks_like_a_wrong_password_and_gets_no_device()
+    {
+        _users.User.IsActive = false;
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
+        var context = Context();
+
+        await validator.ValidateAsync(context);
+
+        Assert.Equal(CustomResourceOwnerPasswordValidator.InvalidCredentialsDescription, context.Result.ErrorDescription);
+        Assert.Empty(_mail.Sent);
+        Assert.Empty(_store.Devices);
+    }
+
+    [Theory]
+    [InlineData("Admin")]
+    [InlineData("admin")]
+    public async Task Enforce_asks_a_new_device_for_a_code_when_the_admin_comes_from_the_role_only(string role)
+    {
+        _users.Roles = new[] { role };
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
+        var context = Context();
+
+        await validator.ValidateAsync(context);
+
+        Assert.Equal(CustomResourceOwnerPasswordValidator.StepUpRequiredDescription, context.Result.ErrorDescription);
+    }
+
+    [Fact]
+    public async Task A_login_carries_the_password_version_it_was_checked_against()
+    {
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
+        var context = Context();
+
+        await validator.ValidateAsync(context);
+
+        Assert.Equal(PasswordChangedAt.UtcTicks.ToString(),
+            context.Result.Subject.FindFirst(IdentityServer.Services.Profil.CustomProfileService.PasswordVersionClaim)?.Value);
+    }
+
+    [Fact]
+    public async Task An_admin_by_user_type_and_a_customer_do_the_same_role_lookup_before_the_password()
+    {
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
+        _users.PasswordOk = false;
+
+        _users.UserTypes = new[] { "B2C" };
+        await validator.ValidateAsync(Context());
+        var customerLookups = _users.RoleLookups;
+        _users.UserTypes = new[] { "Admin" };
+        await validator.ValidateAsync(Context());
+
+        Assert.Equal(1, customerLookups);
+        Assert.Equal(2, _users.RoleLookups);
+    }
+
+    [Fact]
+    public async Task Enforce_gives_an_admin_by_role_and_a_customer_with_a_wrong_password_the_same_answer()
+    {
+        var (validator, _) = Create(LoginProtectionMode.Enforce);
+        _users.PasswordOk = false;
+
+        var customer = Context();
+        await validator.ValidateAsync(customer);
+        _users.Roles = new[] { "Admin" };
+        var admin = Context();
+        await validator.ValidateAsync(admin);
+
+        Assert.Equal((customer.Result.Error, customer.Result.ErrorDescription, customer.Result.CustomResponse),
+            (admin.Result.Error, admin.Result.ErrorDescription, admin.Result.CustomResponse));
     }
 }

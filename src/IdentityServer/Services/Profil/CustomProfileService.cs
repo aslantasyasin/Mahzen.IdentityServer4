@@ -1,9 +1,11 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using IdentityModel;
 using IdentityServer.Models;
+using IdentityServer4;
 using IdentityServer4.Models;
 using IdentityServer4.Services;
 using Microsoft.AspNetCore.Identity;
@@ -12,6 +14,10 @@ namespace IdentityServer.Services.Profil;
 
 public class CustomProfileService : IProfileService
 {
+    public const string PasswordVersionClaim = "pwd_at";
+
+    public static string PasswordVersion(ApplicationUser user) => (user.PasswordChangedAt?.UtcTicks ?? 0).ToString(CultureInfo.InvariantCulture);
+
     private readonly UserManager<ApplicationUser> _userManager;
 
     public CustomProfileService(UserManager<ApplicationUser> userManager)
@@ -44,6 +50,12 @@ public class CustomProfileService : IProfileService
         AddIfRequested("user_type", user.UserType.ToString());
         AddIfRequested("tenant_id", user.TenantId.ToString());
         AddIfRequested("email_confirmed", user.EmailConfirmed.ToString());
+
+        if (context.Caller == IdentityServerConstants.ProfileDataCallers.ClaimsProviderAccessToken
+            && context.Subject.FindFirst(PasswordVersionClaim) is { } passwordVersion)
+        {
+            context.IssuedClaims.Add(new Claim(PasswordVersionClaim, passwordVersion.Value));
+        }
         return;
 
         // helper: add claim only if it's requested and has a non-empty value
@@ -66,8 +78,21 @@ public class CustomProfileService : IProfileService
             return;
         }
 
+        if (!user.IsActive)
+        {
+            context.IsActive = false;
+            return;
+        }
+
         // Hesap kilitli mi?
         if (await _userManager.IsLockedOutAsync(user))
+        {
+            context.IsActive = false;
+            return;
+        }
+
+        if (context.Subject.FindFirst(PasswordVersionClaim) is { } sessionPasswordVersion
+            && sessionPasswordVersion.Value != PasswordVersion(user))
         {
             context.IsActive = false;
             return;

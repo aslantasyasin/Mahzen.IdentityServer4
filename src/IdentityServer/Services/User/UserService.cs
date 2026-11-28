@@ -28,6 +28,7 @@ namespace IdentityServer.Services.User
     {
         private const string PasswordMismatchCode = "PasswordMismatch";
         private const string TooManyPasswordChecks = "TooManyPasswordChecks";
+        private const string CannotDeactivateSelf = "Kendi hesabınızı pasife alamazsınız.";
 
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<ApplicationRole> _roleManager;
@@ -439,11 +440,31 @@ namespace IdentityServer.Services.User
                     return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
                 }
 
+                var deactivating = userRequestDto.IsActive == false;
+                var wasActive = user.IsActive;
+                if (deactivating && user.Id == _userInfo.UserId)
+                {
+                    return ApiResponse<bool>.Fail(CannotDeactivateSelf);
+                }
+
                 // Değişiklikleri logla
                 await LogUserChangesAsync(user, userRequestDto, _userInfo.UserId);
                 
                 UserMap(userRequestDto, user);
                 var updateUserResult = await _userManager.UpdateAsync(user);
+
+                if (updateUserResult.Succeeded && deactivating)
+                {
+                    _logger.LogInformation("user_deactivated UserId={UserId} WasActive={WasActive} ChangedBy={ChangedBy}", userId, wasActive, _userInfo.UserId);
+                    try
+                    {
+                        await _persistedGrantService.RemoveAllGrantsAsync(userId);
+                    }
+                    catch (Exception grantEx)
+                    {
+                        _logger.LogError(grantEx, "user_deactivated_sessions_not_revoked UserId={UserId} old refresh grants stay in the table; inactive users are refused on refresh but the grants revive if the user is activated again", userId);
+                    }
+                }
 
                 response.Data = updateUserResult.Succeeded;
 
@@ -838,54 +859,55 @@ namespace IdentityServer.Services.User
                 return ApiResponse<bool>.Fail("Token'dan kullanıcı id alınamadı.");
             }
 
-            var user = await _userManager.FindByIdAsync(userId);
-            if (user == null)
-            {
-                return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
-            }
-
-            if (string.IsNullOrEmpty(model.CurrentPassword))
-            {
-                return ApiResponse<bool>.Fail(PasswordMismatchCode);
-            }
-
-            if (!await _loginProtection.TryClaimPasswordCheckAsync(userId))
-            {
-                _logger.LogWarning("password_check_limited UserId={UserId} Action=update_email", userId);
-                return ApiResponse<bool>.Fail(TooManyPasswordChecks);
-            }
-
-            if (!await _userManager.CheckPasswordAsync(user, model.CurrentPassword))
-            {
-                _logger.LogWarning("update_email_password_mismatch UserId={UserId}", userId);
-                return ApiResponse<bool>.Fail(PasswordMismatchCode);
-            }
-
-            if (string.Equals(model.Email?.Trim(), user.Email, StringComparison.OrdinalIgnoreCase))
-            {
-                return ApiResponse<bool>.Fail("Yeni e-posta adresi mevcut adresinizle aynı.");
-            }
-
-            if (!await _loginProtection.TryClaimEmailChangeAsync(userId))
-            {
-                _logger.LogWarning("email_change_limited UserId={UserId}", userId);
-                return ApiResponse<bool>.Fail("Kısa sürede çok fazla e-posta değişikliği yapıldı. Lütfen bir saat sonra tekrar deneyin.");
-            }
-
-            // Email zaten kullanılıyor mu kontrol et
-            var existingUser = await _userManager.FindByEmailAsync(model.Email);
-            if (existingUser != null && existingUser.Id != userId)
-            {
-                return ApiResponse<bool>.Fail("Bu email adresi başka bir kullanıcı tarafından kullanılmaktadır.");
-            }
-
-            // Eski değerleri sakla (loglama için)
-            var oldEmail = user.Email;
-            var oldUserName = user.UserName;
-            var isUsernameChanged = user.UserName == oldEmail;
-
+            string oldEmail = null;
             try
             {
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return ApiResponse<bool>.Fail("Kullanıcı bulunamadı.");
+                }
+
+                if (string.IsNullOrEmpty(model.CurrentPassword))
+                {
+                    return ApiResponse<bool>.Fail(PasswordMismatchCode);
+                }
+
+                if (!await _loginProtection.TryClaimPasswordCheckAsync(userId))
+                {
+                    _logger.LogWarning("password_check_limited UserId={UserId} Action=update_email", userId);
+                    return ApiResponse<bool>.Fail(TooManyPasswordChecks);
+                }
+
+                if (!await _userManager.CheckPasswordAsync(user, model.CurrentPassword))
+                {
+                    _logger.LogWarning("update_email_password_mismatch UserId={UserId}", userId);
+                    return ApiResponse<bool>.Fail(PasswordMismatchCode);
+                }
+
+                if (string.Equals(model.Email?.Trim(), user.Email, StringComparison.OrdinalIgnoreCase))
+                {
+                    return ApiResponse<bool>.Fail("Yeni e-posta adresi mevcut adresinizle aynı.");
+                }
+
+                if (!await _loginProtection.TryClaimEmailChangeAsync(userId))
+                {
+                    _logger.LogWarning("email_change_limited UserId={UserId}", userId);
+                    return ApiResponse<bool>.Fail("Kısa sürede çok fazla e-posta değişikliği yapıldı. Lütfen bir saat sonra tekrar deneyin.");
+                }
+
+                // Email zaten kullanılıyor mu kontrol et
+                var existingUser = await _userManager.FindByEmailAsync(model.Email);
+                if (existingUser != null && existingUser.Id != userId)
+                {
+                    return ApiResponse<bool>.Fail("Bu email adresi başka bir kullanıcı tarafından kullanılmaktadır.");
+                }
+
+                // Eski değerleri sakla (loglama için)
+                oldEmail = user.Email;
+                var oldUserName = user.UserName;
+                var isUsernameChanged = user.UserName == oldEmail;
+
                 // TransactionScope ile atomik işlem
                 using (var scope = new System.Transactions.TransactionScope(
                     System.Transactions.TransactionScopeOption.Required,

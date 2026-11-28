@@ -28,19 +28,21 @@ public class ProfileIsActiveTests
 
     private sealed class Users : UserManager<ApplicationUser>
     {
-        public ApplicationUser User = new() { Id = "user-1", UserName = "ali@ornek.com" };
+        public ApplicationUser User = new() { Id = "user-1", UserName = "ali@ornek.com", IsActive = true };
         public bool LockedOut;
 
         public Users() : base(new NoStore(), null!, null!, null!, null!, null!, null!, null!, null!) { }
 
         public override Task<ApplicationUser> GetUserAsync(ClaimsPrincipal principal) => Task.FromResult(User);
         public override Task<bool> IsLockedOutAsync(ApplicationUser user) => Task.FromResult(LockedOut);
+        public override Task<IList<string>> GetRolesAsync(ApplicationUser user) => Task.FromResult<IList<string>>(new List<string>());
     }
 
-    private static async Task<bool> IsActive(Users users, long? authTime)
+    private static async Task<bool> IsActive(Users users, long? authTime, string? passwordVersion = null)
     {
         var claims = new List<Claim> { new(JwtClaimTypes.Subject, "user-1") };
         if (authTime is { } t) claims.Add(new Claim(JwtClaimTypes.AuthenticationTime, t.ToString()));
+        if (passwordVersion is not null) claims.Add(new Claim(CustomProfileService.PasswordVersionClaim, passwordVersion));
         var context = new IsActiveContext(new ClaimsPrincipal(new ClaimsIdentity(claims, "test")), new Client(), "test");
         await new CustomProfileService(users).IsActiveAsync(context);
         return context.IsActive;
@@ -85,4 +87,41 @@ public class ProfileIsActiveTests
     [Fact]
     public async Task A_locked_out_user_is_not_active() =>
         Assert.False(await IsActive(new Users { LockedOut = true }, authTime: null));
+
+    [Fact]
+    public async Task An_inactive_user_is_not_active() =>
+        Assert.False(await IsActive(new Users { User = { IsActive = false } }, authTime: null));
+
+    [Fact]
+    public async Task A_session_that_checked_the_old_password_is_not_active_even_if_issued_after_the_change()
+    {
+        var users = new Users { User = { PasswordChangedAt = ChangedAt } };
+
+        Assert.False(await IsActive(users, ChangedAt.ToUnixTimeSeconds() + 1, passwordVersion: "0"));
+    }
+
+    [Fact]
+    public async Task A_session_that_checked_the_current_password_is_active()
+    {
+        var users = new Users { User = { PasswordChangedAt = ChangedAt } };
+
+        Assert.True(await IsActive(users, ChangedAt.ToUnixTimeSeconds() + 1, CustomProfileService.PasswordVersion(users.User)));
+    }
+
+    [Theory]
+    [InlineData(IdentityServer4.IdentityServerConstants.ProfileDataCallers.ClaimsProviderAccessToken, true)]
+    [InlineData(IdentityServer4.IdentityServerConstants.ProfileDataCallers.UserInfoEndpoint, false)]
+    public async Task Only_the_access_token_carries_the_password_version(string caller, bool expected)
+    {
+        var subject = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(JwtClaimTypes.Subject, "user-1"),
+            new Claim(CustomProfileService.PasswordVersionClaim, "42"),
+        }, "test"));
+        var context = new ProfileDataRequestContext(subject, new Client(), caller, new string[0]);
+
+        await new CustomProfileService(new Users()).GetProfileDataAsync(context);
+
+        Assert.Equal(expected, context.IssuedClaims.Any(c => c.Type == CustomProfileService.PasswordVersionClaim && c.Value == "42"));
+    }
 }
