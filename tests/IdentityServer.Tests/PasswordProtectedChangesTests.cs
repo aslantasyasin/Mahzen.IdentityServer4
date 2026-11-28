@@ -44,6 +44,7 @@ public class PasswordProtectedChangesTests
         public int PasswordChecks;
         public (DateTimeOffset? LockoutEnd, int AccessFailedCount, bool EmailConfirmed)? Saved;
         public bool FailToSave;
+        public bool RejectSave;
         public DateTimeOffset? SavedPasswordChangedAt;
 
         public Users() : base(new NoStore(), null!, null!, null!, null!, null!, null!, null!, null!) { }
@@ -78,6 +79,7 @@ public class PasswordProtectedChangesTests
         public override Task<IdentityResult> UpdateAsync(ApplicationUser user)
         {
             if (FailToSave) throw new InvalidOperationException(InternalDetail);
+            if (RejectSave) return Task.FromResult(IdentityResult.Failed(new IdentityError { Code = "DuplicateEmail" }));
             Saved = (user.LockoutEnd, user.AccessFailedCount, user.EmailConfirmed);
             SavedPasswordChangedAt = user.PasswordChangedAt;
             return Task.FromResult(IdentityResult.Success);
@@ -100,8 +102,16 @@ public class PasswordProtectedChangesTests
     private sealed class NoChangeLog : IUserChangeLogService
     {
         public bool Fails;
+        public readonly List<(string Field, string OldValue, string NewValue)> Logged = new();
         public Task LogChangeAsync(string userId, string fieldName, string oldValue, string newValue, string changedBy) =>
-            Fails ? throw new InvalidOperationException(InternalDetail) : Task.CompletedTask;
+            LogChangesAsync(userId, new[] { (fieldName, oldValue, newValue) }, changedBy);
+
+        public Task LogChangesAsync(string userId, IReadOnlyList<(string FieldName, string OldValue, string NewValue)> changes, string changedBy)
+        {
+            if (Fails) throw new InvalidOperationException(InternalDetail);
+            Logged.AddRange(changes.Select(change => (change.FieldName, change.OldValue, change.NewValue)));
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class Mailer : ILoginMailer
@@ -452,6 +462,52 @@ public class PasswordProtectedChangesTests
         Assert.Contains(_log.Errors, ex => ex?.Message == "db down");
         Assert.Equal(0, _users.EmailChanges);
         Assert.Empty(_mailer.Sent);
+    }
+
+    [Fact]
+    public async Task An_update_that_fails_to_save_writes_no_change_log()
+    {
+        _users.FailToSave = true;
+
+        var result = await Service(AdminId).UpdateUserAsync(OtherUserId, new ApplicationUserUpdateRequestDto { FirstName = "Veli" });
+
+        Assert.True(result.HasError);
+        Assert.Empty(_changeLog.Logged);
+    }
+
+    [Fact]
+    public async Task An_update_the_user_store_rejects_writes_no_change_log_and_reports_failure()
+    {
+        _users.RejectSave = true;
+
+        var result = await Service(AdminId).UpdateUserAsync(OtherUserId, new ApplicationUserUpdateRequestDto { FirstName = "Veli" });
+
+        Assert.False(result.Data);
+        Assert.Empty(_changeLog.Logged);
+    }
+
+    [Fact]
+    public async Task A_saved_update_logs_only_the_fields_that_changed_with_their_old_values()
+    {
+        var oldFirstName = _users.Other.FirstName;
+        var oldLastName = _users.Other.LastName;
+
+        var result = await Service(AdminId).UpdateUserAsync(OtherUserId,
+            new ApplicationUserUpdateRequestDto { FirstName = "Veli", LastName = oldLastName });
+
+        Assert.True(result.Data);
+        Assert.Equal(new[] { ("FirstName", oldFirstName, "Veli") }, _changeLog.Logged);
+    }
+
+    [Fact]
+    public async Task A_failed_change_log_does_not_report_a_saved_update_as_failed()
+    {
+        _changeLog.Fails = true;
+
+        var result = await Service(AdminId).UpdateUserAsync(OtherUserId, new ApplicationUserUpdateRequestDto { FirstName = "Veli" });
+
+        Assert.True(result.Data);
+        Assert.Single(_log.Messages, m => m.StartsWith("user_change_log_failed") && m.Contains("FirstName") && m.Contains(AdminId));
     }
 
     [Fact]

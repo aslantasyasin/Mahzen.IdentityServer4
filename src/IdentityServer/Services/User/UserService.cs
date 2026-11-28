@@ -447,11 +447,22 @@ namespace IdentityServer.Services.User
                     return ApiResponse<bool>.Fail(CannotDeactivateSelf);
                 }
 
-                // Değişiklikleri logla
-                await LogUserChangesAsync(user, userRequestDto, _userInfo.UserId);
-                
+                var changes = UserChangesOf(user, userRequestDto);
                 UserMap(userRequestDto, user);
                 var updateUserResult = await _userManager.UpdateAsync(user);
+
+                if (updateUserResult.Succeeded && changes.Count > 0)
+                {
+                    try
+                    {
+                        await _userChangeLogService.LogChangesAsync(user.Id, changes, _userInfo.UserId);
+                    }
+                    catch (Exception logEx)
+                    {
+                        _logger.LogError(logEx, "user_change_log_failed Operation={Operation} UserId={UserId} ChangedBy={ChangedBy} Fields={Fields}",
+                            nameof(UpdateUserAsync), userId, _userInfo.UserId, string.Join(',', changes.Select(change => change.Field)));
+                    }
+                }
 
                 if (updateUserResult.Succeeded && deactivating)
                 {
@@ -1106,42 +1117,24 @@ namespace IdentityServer.Services.User
             return response;
         }
 
-        private async Task LogUserChangesAsync(ApplicationUser user, ApplicationUserUpdateRequestDto userRequestDto, string changedBy)
+        private static List<(string Field, string OldValue, string NewValue)> UserChangesOf(ApplicationUser user, ApplicationUserUpdateRequestDto dto)
         {
-            if (userRequestDto.IsActive != null && user.IsActive != userRequestDto.IsActive)
-            {
-                await _userChangeLogService.LogChangeAsync(user.Id, "IsActive", user.IsActive.ToString(), userRequestDto.IsActive.ToString(), changedBy);
-            }
-
-            if (userRequestDto.UserName != null && user.UserName != userRequestDto.UserName)
-            {
-                await _userChangeLogService.LogChangeAsync(user.Id, "UserName", user.UserName, userRequestDto.UserName, changedBy);
-            }
-
-            if (userRequestDto.FirstName != null && user.FirstName != userRequestDto.FirstName)
-            {
-                await _userChangeLogService.LogChangeAsync(user.Id, "FirstName", user.FirstName, userRequestDto.FirstName, changedBy);
-            }
-
-            if (userRequestDto.LastName != null && user.LastName != userRequestDto.LastName)
-            {
-                await _userChangeLogService.LogChangeAsync(user.Id, "LastName", user.LastName, userRequestDto.LastName, changedBy);
-            }
-
-            if (userRequestDto.UserType != null && user.UserType != userRequestDto.UserType)
-            {
-                await _userChangeLogService.LogChangeAsync(user.Id, "UserType", user.UserType.ToString(), userRequestDto.UserType.ToString(), changedBy);
-            }
-
-            if (userRequestDto.Email != null && user.Email != userRequestDto.Email)
-            {
-                await _userChangeLogService.LogChangeAsync(user.Id, "Email", user.Email, userRequestDto.Email, changedBy);
-            }
-
-            if (userRequestDto.PhoneNumber != null && user.PhoneNumber != userRequestDto.PhoneNumber)
-            {
-                await _userChangeLogService.LogChangeAsync(user.Id, "PhoneNumber", user.PhoneNumber, userRequestDto.PhoneNumber, changedBy);
-            }
+            var changes = new List<(string, string, string)>();
+            if (dto.IsActive != null && user.IsActive != dto.IsActive)
+                changes.Add(("IsActive", user.IsActive.ToString(), dto.IsActive.ToString()));
+            if (dto.UserName != null && user.UserName != dto.UserName)
+                changes.Add(("UserName", user.UserName, dto.UserName));
+            if (dto.FirstName != null && user.FirstName != dto.FirstName)
+                changes.Add(("FirstName", user.FirstName, dto.FirstName));
+            if (dto.LastName != null && user.LastName != dto.LastName)
+                changes.Add(("LastName", user.LastName, dto.LastName));
+            if (dto.UserType != null && user.UserType != dto.UserType)
+                changes.Add(("UserType", user.UserType.ToString(), dto.UserType.ToString()));
+            if (dto.Email != null && user.Email != dto.Email)
+                changes.Add(("Email", user.Email, dto.Email));
+            if (dto.PhoneNumber != null && user.PhoneNumber != dto.PhoneNumber)
+                changes.Add(("PhoneNumber", user.PhoneNumber, dto.PhoneNumber));
+            return changes;
         }
 
         private void UserMap(ApplicationUserUpdateRequestDto userRequestDto, ApplicationUser user)

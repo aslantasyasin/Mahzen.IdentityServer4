@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using IdentityServer.Data;
 using IdentityServer.Models;
@@ -17,22 +19,25 @@ namespace IdentityServer.Services.User
             _userInfo = new UserInfo(serviceScopeFactory);
         }
 
-        public async Task LogChangeAsync(string userId, string fieldName, string oldValue, string newValue, string changedBy)
+        public Task LogChangeAsync(string userId, string fieldName, string oldValue, string newValue, string changedBy) =>
+            LogChangesAsync(userId, new[] { (fieldName, oldValue, newValue) }, changedBy);
+
+        public async Task LogChangesAsync(string userId, IReadOnlyList<(string FieldName, string OldValue, string NewValue)> changes, string changedBy)
         {
-            var log = new UserChangeLog
+            var now = DateTime.UtcNow;
+            var logs = changes.Select(change => new UserChangeLog
             {
                 UserId = userId,
-                FieldName = fieldName,
-                OldValue = oldValue ?? string.Empty,
-                NewValue = newValue ?? string.Empty,
-                ChangedAt = DateTime.UtcNow,
+                FieldName = change.FieldName,
+                OldValue = change.OldValue ?? string.Empty,
+                NewValue = change.NewValue ?? string.Empty,
+                ChangedAt = now,
                 ChangedBy = changedBy,
                 TenantId = _userInfo.TenantId
-            };
+            });
 
-            await _customDbContext.UserChangeLogs.AddAsync(log);
+            await _customDbContext.UserChangeLogs.AddRangeAsync(logs);
             await _customDbContext.SaveChangesAsync();
         }
     }
 }
-
